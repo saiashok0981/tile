@@ -63,6 +63,19 @@ func runSmokeTest() -> Bool {
         return false
     }
 
+    let topRight = destination.workspace.panes[1]
+    destination.selectedPane = topRight.id
+    destination.navigate(dx: 0, dy: 1, swap: false)
+    guard destination.selectedPane == destination.workspace.panes[2].id else {
+        fputs("Three-pane downward navigation failed\n", stderr)
+        return false
+    }
+    destination.navigate(dx: 0, dy: -1, swap: false)
+    guard destination.selectedPane == topRight.id else {
+        fputs("Three-pane upward navigation failed\n", stderr)
+        return false
+    }
+
     let otherPane = destination.workspace.panes.first!
     let click = NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 10, y: 10),
                                    modifierFlags: [], timestamp: 0,

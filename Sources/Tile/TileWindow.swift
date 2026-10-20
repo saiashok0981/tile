@@ -4,6 +4,7 @@ import AppKit
 final class Workspace {
     let id: UUID
     var panes: [TerminalSession]
+    var lastTopColumn = 0
     init(id: UUID = UUID(), panes: [TerminalSession] = []) {
         self.id = id
         self.panes = panes
@@ -272,7 +273,15 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         let nextColumn = column + dx
         let nextRow = row + dy
         guard (0...1).contains(nextColumn), (0...1).contains(nextRow) else { return }
-        let next = workspace.panes.count == 3 && nextRow == 1 ? 2 : nextRow * 2 + nextColumn
+        let next: Int
+        if workspace.panes.count == 3 && row == 0 && dy == 1 {
+            workspace.lastTopColumn = column
+            next = 2
+        } else if workspace.panes.count == 3 && row == 1 && dy == -1 {
+            next = workspace.lastTopColumn
+        } else {
+            next = nextRow * 2 + nextColumn
+        }
         guard next < workspace.panes.count else { return }
         if swap { workspace.panes.swapAt(current, next); render() }
         selectedPane = workspace.panes[next].id

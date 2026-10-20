@@ -5,6 +5,9 @@ cd "${0:A:h}/.."
 swift build -c release --product Tile
 
 app_dir="${PWD}/dist/Tile.app"
+if [[ -d "${app_dir}" ]]; then
+  chmod -R u+w "${app_dir}"
+fi
 mkdir -p "${app_dir}/Contents/MacOS"
 mkdir -p "${app_dir}/Contents/Resources/Licenses"
 cp .build/release/Tile "${app_dir}/Contents/MacOS/Tile"
