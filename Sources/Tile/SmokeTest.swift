@@ -24,9 +24,10 @@ func runFourPaneLayoutTest() -> Bool {
         controller.allSessions.forEach { $0.view.terminate() }
         controller.window?.close()
     }
-    guard let root = controller.window?.contentView,
+    guard let root = controller.window?.contentView as? TileRootView,
           let plus = viewDescendants(root).compactMap({ $0 as? NSButton }).first(where: { $0.title == "+" }),
-          let settings = viewDescendants(root).compactMap({ $0 as? NSButton }).first(where: { $0.title == "⚙" }) else {
+          let settings = viewDescendants(root).compactMap({ $0 as? NSButton }).first(where: { $0.title == "⚙" }),
+          let clock = viewDescendants(root).compactMap({ $0 as? NSTextField }).first(where: { $0.identifier?.rawValue == "tile.clock" }) else {
         fputs("Four-pane check: plus button is missing\n", stderr)
         return false
     }
@@ -34,7 +35,8 @@ func runFourPaneLayoutTest() -> Bool {
     RunLoop.current.run(until: Date().addingTimeInterval(0.1))
     root.layoutSubtreeIfNeeded()
     let settingsFrame = settings.convert(settings.bounds, to: root)
-    guard settingsFrame.maxX >= root.bounds.maxX - 20 else {
+    guard settingsFrame.maxX >= root.bounds.maxX - 20,
+          [TileClock.label(for: Date()), TileClock.label(for: Date().addingTimeInterval(-60))].contains(clock.stringValue) else {
         fputs("Wide-window toolbar alignment failed: settings at \(settingsFrame.maxX), edge \(root.bounds.maxX)\n", stderr)
         return false
     }
@@ -55,8 +57,12 @@ func runFourPaneLayoutTest() -> Bool {
     let frames = terminals.map { $0.convert($0.bounds, to: nil) }
     let paneFrames = viewDescendants(root).compactMap { $0 as? PaneView }.map { $0.convert($0.bounds, to: nil) }
     let gapSurfaces = viewDescendants(root).compactMap { $0 as? DropSurface }
+    let interiorGaps = root.interiorGapRects()
     guard terminals.count == 4,
           paneFrames.count == 4,
+          interiorGaps.count == 3,
+          interiorGaps.allSatisfy({ $0.minX >= paneFrames.map(\.minX).min()! && $0.maxX <= paneFrames.map(\.maxX).max()! }),
+          interiorGaps.allSatisfy({ $0.minY >= paneFrames.map(\.minY).min()! && $0.maxY <= paneFrames.map(\.maxY).max()! }),
           controller.window?.isOpaque == false,
           controller.window?.backgroundColor.alphaComponent == 0,
           gapSurfaces.allSatisfy({ ($0.layer?.backgroundColor?.alpha ?? 0) == 0 }),

@@ -1,6 +1,62 @@
 import AppKit
 
 @MainActor
+final class TileRootView: NSView {
+    weak var contentSurface: NSView?
+
+    override func layout() {
+        super.layout()
+        needsDisplay = true
+    }
+
+    func interiorGapRects() -> [NSRect] {
+        guard let contentSurface else { return [] }
+        func panes(in view: NSView) -> [PaneView] {
+            view.subviews.flatMap { child in
+                (child as? PaneView).map { [$0] } ?? panes(in: child)
+            }
+        }
+        let frames = panes(in: contentSurface).map { $0.convert($0.bounds, to: self) }
+        guard frames.count > 1 else { return [] }
+        func verticalGap(_ left: NSRect, _ right: NSRect) -> NSRect {
+            NSRect(x: left.maxX, y: max(left.minY, right.minY),
+                   width: max(0, right.minX - left.maxX),
+                   height: max(0, min(left.maxY, right.maxY) - max(left.minY, right.minY)))
+        }
+        if frames.count == 2 { return [verticalGap(frames[0], frames[1])] }
+        let top = Array(frames.prefix(2))
+        let bottom = Array(frames.dropFirst(2))
+        let horizontal = NSRect(x: frames.map(\.minX).min() ?? 0,
+                                y: bottom.map(\.maxY).max() ?? 0,
+                                width: (frames.map(\.maxX).max() ?? 0) - (frames.map(\.minX).min() ?? 0),
+                                height: max(0, (top.map(\.minY).min() ?? 0) - (bottom.map(\.maxY).max() ?? 0)))
+        var gaps = [verticalGap(top[0], top[1]), horizontal]
+        if bottom.count == 2 { gaps.append(verticalGap(bottom[0], bottom[1])) }
+        return gaps.filter { !$0.isEmpty }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.windowBackgroundColor.setFill()
+        let background = NSBezierPath(rect: bounds)
+        if PaneLayout.transparentGaps {
+            for gap in interiorGapRects() { background.appendRect(gap) }
+            background.windingRule = .evenOdd
+        }
+        background.fill()
+    }
+}
+
+enum TileClock {
+    static func label(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.timeZone = .current
+        formatter.dateFormat = "EEEE dd/MM/yyyy HH:mm"
+        return formatter.string(from: date)
+    }
+}
+
+@MainActor
 final class Workspace {
     let id: UUID
     var panes: [TerminalSession]
@@ -182,10 +238,12 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     var selectedPane: UUID?
     var focused = false
     var allowClose = false
-    private let root = NSView()
+    private let root = TileRootView()
     private let toolbar = NSStackView()
     private let tabs = NSStackView()
     private let toolbarSpacer = NSView()
+    private let clockLabel = NSTextField(labelWithString: "")
+    private var clockTimer: Timer?
     private let content = DropSurface(frame: .zero)
     private let plus = NSButton(title: "+", target: nil, action: nil)
     private let focus = NSButton(title: "Focus", target: nil, action: nil)
@@ -205,6 +263,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         toolbar.wantsLayer = true
         content.wantsLayer = true
         content.owner = self
+        root.contentSurface = content
         root.addSubview(toolbar)
         root.addSubview(content)
         toolbar.orientation = .horizontal
@@ -215,6 +274,13 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         toolbar.addArrangedSubview(tabs)
         toolbarSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         toolbar.addArrangedSubview(toolbarSpacer)
+        clockLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        clockLabel.alignment = .right
+        clockLabel.identifier = NSUserInterfaceItemIdentifier("tile.clock")
+        clockLabel.setContentHuggingPriority(.required, for: .horizontal)
+        toolbar.addArrangedSubview(clockLabel)
+        updateClock()
+        clockTimer = Timer.scheduledTimer(timeInterval: 15, target: self, selector: #selector(updateClock), userInfo: nil, repeats: true)
         for (button, action) in [(plus, #selector(addPane)), (focus, #selector(toggleFocus)), (settings, #selector(openSettings))] {
             button.target = self
             button.action = action
@@ -323,9 +389,10 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         let transparent = PaneLayout.transparentGaps
         window?.isOpaque = !transparent
         window?.backgroundColor = transparent ? .clear : .windowBackgroundColor
-        root.layer?.backgroundColor = (transparent ? NSColor.clear : NSColor.windowBackgroundColor).cgColor
+        root.layer?.backgroundColor = NSColor.clear.cgColor
         content.layer?.backgroundColor = (transparent ? NSColor.clear : NSColor.windowBackgroundColor).cgColor
         toolbar.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        root.needsDisplay = true
     }
     private func split(_ views: [NSView], vertical: Bool, ratio: CGFloat, onChange: @escaping (CGFloat) -> Void) -> NSView {
         guard views.count > 1 else { return views[0] }
@@ -413,6 +480,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         render()
     }
     @objc private func openSettings() { app?.showSettings() }
+    @objc private func updateClock() { clockLabel.stringValue = TileClock.label(for: Date()) }
     @objc private func selectTab(_ sender: NSButton) { selectWorkspace(sender.tag) }
     func windowDidBecomeKey(_ notification: Notification) { app?.lastWindow = self }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -421,5 +489,9 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         allowClose = true
         return true
     }
-    func windowWillClose(_ notification: Notification) { app?.removeWindow(self) }
+    func windowWillClose(_ notification: Notification) {
+        clockTimer?.invalidate()
+        clockTimer = nil
+        app?.removeWindow(self)
+    }
 }
