@@ -165,6 +165,7 @@ final class PaneView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = TerminalTheme.current.background.cgColor
+        applyCornerRadius(PaneLayout.cornerRadius)
         title.stringValue = session.displayTitle
         title.textColor = TerminalTheme.current.foreground
         title.lineBreakMode = .byTruncatingTail
@@ -206,6 +207,10 @@ final class PaneView: NSView {
     @objc private func closePane() { onClose?() }
     @objc private func renamePane() { onRename?() }
     @objc private func refreshActivity() { updateActivity() }
+    func applyCornerRadius(_ radius: CGFloat) {
+        layer?.cornerRadius = radius
+        layer?.masksToBounds = radius > 0
+    }
     func updateActivity() {
         let running = session.hasRunningCommand
         layer?.borderWidth = running ? 2 : 0
@@ -248,6 +253,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     private let clockLabel = NSTextField(labelWithString: "")
     private var clockTimer: Timer?
     private let content = DropSurface(frame: .zero)
+    private var paneViews: [PaneView] = []
     private let plus = NSButton(title: "+", target: nil, action: nil)
     private let focus = NSButton(title: "Focus", target: nil, action: nil)
     private let settings = NSButton(title: "⚙", target: nil, action: nil)
@@ -344,6 +350,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
             tabs.addArrangedSubview(button)
         }
         content.subviews.forEach { $0.removeFromSuperview() }
+        paneViews.removeAll()
         let sessions = focused ? workspace.panes.filter { $0.id == selectedPane } : workspace.panes
         guard let app else { return }
         let panes = sessions.map { session -> DropSurface in
@@ -355,6 +362,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
                 app?.select(session)
             }
             let pane = PaneView(session: session, owner: app)
+            paneViews.append(pane)
             pane.onClose = { [weak self] in self?.close(session) }
             pane.onRename = { [weak self] in self?.rename(session) }
             drop.addSubview(pane)
@@ -408,6 +416,9 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         split.onRatioChange = onChange
         views.forEach(split.addSubview)
         return split
+    }
+    func updateCornerRadius(_ radius: CGFloat) {
+        paneViews.forEach { $0.applyCornerRadius(radius) }
     }
     func close(_ session: TerminalSession) {
         guard app?.confirmClose([session]) == true else { return }

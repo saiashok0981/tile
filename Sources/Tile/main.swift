@@ -93,6 +93,9 @@ final class TileApp: NSObject, NSApplicationDelegate {
     }
     func showSettings() {
         let settings = SettingsWindow()
+        settings.onCornerPreview = { [weak self] radius in
+            self?.windows.forEach { $0.updateCornerRadius(radius) }
+        }
         settings.onSave = { [weak self] in
             guard let self else { return }
             let size = UserDefaults.standard.object(forKey: "fontSize") as? Int ?? 13

@@ -6,6 +6,10 @@ enum PaneLayout {
         return CGFloat(min(max(saved, 0), 24))
     }
     static var transparentGaps: Bool { UserDefaults.standard.bool(forKey: "transparentPaneGaps") }
+    static var cornerRadius: CGFloat {
+        let saved = UserDefaults.standard.object(forKey: "paneCornerRadius") as? Int ?? 0
+        return CGFloat(min(max(saved, 0), 24))
+    }
 }
 
 enum TerminalTheme: String, CaseIterable {
@@ -133,21 +137,27 @@ enum Shortcuts {
 }
 
 @MainActor
-final class SettingsWindow: NSWindowController {
+final class SettingsWindow: NSWindowController, NSWindowDelegate {
     private let dragCheck = NSButton(checkboxWithTitle: "Enable dragging panes", target: nil, action: nil)
     private let titlesCheck = NSButton(checkboxWithTitle: "Show pane titles", target: nil, action: nil)
     private let transparentGapsCheck = NSButton(checkboxWithTitle: "Transparent gaps between terminals", target: nil, action: nil)
     private let fontSize = NSTextField()
     private let themePicker = NSPopUpButton()
     private let paneGap = NSTextField()
+    private let cornerSlider = NSSlider()
+    private let cornerValue = NSTextField(labelWithString: "")
     private let shellPath = NSTextField()
     private var shortcutFields: [TileAction: NSTextField] = [:]
     var onSave: (() -> Void)?
+    var onCornerPreview: ((CGFloat) -> Void)?
+    private let initialCornerRadius = PaneLayout.cornerRadius
+    private var saved = false
 
     init() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 680), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Tile Settings"
         super.init(window: window)
+        window.delegate = self
         let root = NSScrollView(frame: window.contentView!.bounds)
         root.hasVerticalScroller = true
         root.autoresizingMask = [.width, .height]
@@ -174,6 +184,20 @@ final class SettingsWindow: NSWindowController {
         paneGap.frame = NSRect(x: 270, y: y, width: 210, height: 23)
         paneGap.stringValue = String(Int(PaneLayout.gap))
         form.addSubview(paneGap)
+        y -= 30
+        label("Terminal corner radius")
+        cornerSlider.frame = NSRect(x: 270, y: y, width: 165, height: 23)
+        cornerSlider.minValue = 0
+        cornerSlider.maxValue = 24
+        cornerSlider.doubleValue = Double(initialCornerRadius)
+        cornerSlider.isContinuous = true
+        cornerSlider.identifier = NSUserInterfaceItemIdentifier("tile.cornerRadius")
+        cornerSlider.target = self
+        cornerSlider.action = #selector(previewCornerRadius(_:))
+        form.addSubview(cornerSlider)
+        cornerValue.frame = NSRect(x: 442, y: y, width: 45, height: 22)
+        cornerValue.stringValue = "\(Int(initialCornerRadius)) pt"
+        form.addSubview(cornerValue)
         y -= 30
         transparentGapsCheck.frame = NSRect(x: 20, y: y, width: 320, height: 22)
         transparentGapsCheck.state = PaneLayout.transparentGaps ? .on : .off
@@ -211,6 +235,14 @@ final class SettingsWindow: NSWindowController {
         window.center()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
+    @objc private func previewCornerRadius(_ sender: NSSlider) {
+        let radius = Int(sender.doubleValue.rounded())
+        cornerValue.stringValue = "\(radius) pt"
+        onCornerPreview?(CGFloat(radius))
+    }
+    func windowWillClose(_ notification: Notification) {
+        if !saved { onCornerPreview?(initialCornerRadius) }
+    }
     @objc private func saveSettings() {
         var values: [TileAction: String] = [:]
         for (action, field) in shortcutFields {
@@ -233,10 +265,12 @@ final class SettingsWindow: NSWindowController {
         defaults.set(titlesCheck.state == .on, forKey: "showPaneTitles")
         defaults.set(size, forKey: "fontSize")
         defaults.set(gap, forKey: "paneGap")
+        defaults.set(Int(cornerSlider.doubleValue.rounded()), forKey: "paneCornerRadius")
         defaults.set(transparentGapsCheck.state == .on, forKey: "transparentPaneGaps")
         defaults.set(TerminalTheme.allCases[themePicker.indexOfSelectedItem].rawValue, forKey: "terminalTheme")
         defaults.set(shellPath.stringValue, forKey: "shellPath")
         for (action, value) in values { defaults.set(value, forKey: "shortcut.\(action.rawValue)") }
+        saved = true
         onSave?()
         close()
     }

@@ -11,12 +11,15 @@ func runFourPaneLayoutTest() -> Bool {
     let defaults = UserDefaults.standard
     let previousGap = defaults.object(forKey: "paneGap")
     let previousTransparency = defaults.object(forKey: "transparentPaneGaps")
+    let previousRadius = defaults.object(forKey: "paneCornerRadius")
     let previousSnapshot = defaults.data(forKey: "workspaceSnapshot")
     defaults.set(16, forKey: "paneGap")
     defaults.set(true, forKey: "transparentPaneGaps")
+    defaults.set(0, forKey: "paneCornerRadius")
     defer {
         defaults.set(previousGap, forKey: "paneGap")
         defaults.set(previousTransparency, forKey: "transparentPaneGaps")
+        defaults.set(previousRadius, forKey: "paneCornerRadius")
         defaults.set(previousSnapshot, forKey: "workspaceSnapshot")
     }
     let app = TileApp()
@@ -87,6 +90,31 @@ func runFourPaneLayoutTest() -> Bool {
               ((i + 1)..<4).allSatisfy { j in frames[i].intersection(frames[j]).isEmpty }
           }) else {
         fputs("Four-pane check failed: \(terminals.count) views, frames \(frames)\n", stderr)
+        return false
+    }
+    app.showSettings()
+    guard let settingsWindow = NSApp.windows.first(where: { $0.title == "Tile Settings" }),
+          let settingsRoot = settingsWindow.contentView,
+          let slider = viewDescendants(settingsRoot).compactMap({ $0 as? NSSlider }).first(where: { $0.identifier?.rawValue == "tile.cornerRadius" }) else {
+        fputs("Corner radius slider is missing\n", stderr)
+        return false
+    }
+    slider.doubleValue = 16
+    _ = NSApp.sendAction(slider.action!, to: slider.target, from: slider)
+    guard viewDescendants(root).compactMap({ $0 as? PaneView }).allSatisfy({ $0.layer?.cornerRadius == 16 && $0.layer?.masksToBounds == true }) else {
+        fputs("Corner radius live preview failed\n", stderr)
+        return false
+    }
+    settingsWindow.close()
+    guard viewDescendants(root).compactMap({ $0 as? PaneView }).allSatisfy({ $0.layer?.cornerRadius == 0 }) else {
+        fputs("Corner radius cancel preview failed\n", stderr)
+        return false
+    }
+    defaults.set(12, forKey: "paneCornerRadius")
+    controller.render()
+    root.layoutSubtreeIfNeeded()
+    guard viewDescendants(root).compactMap({ $0 as? PaneView }).allSatisfy({ $0.layer?.cornerRadius == 12 }) else {
+        fputs("Saved corner radius was not applied to new pane views\n", stderr)
         return false
     }
     UserDefaults.standard.set(false, forKey: "transparentPaneGaps")
