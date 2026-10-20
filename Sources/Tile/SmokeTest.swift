@@ -33,15 +33,20 @@ func runFourPaneLayoutTest() -> Bool {
     guard let root = controller.window?.contentView as? TileRootView,
           let plus = viewDescendants(root).compactMap({ $0 as? NSButton }).first(where: { $0.title == "+" }),
           let settings = viewDescendants(root).compactMap({ $0 as? NSButton }).first(where: { $0.title == "⚙" }),
+          let brand = viewDescendants(root).compactMap({ $0 as? TileBrandView }).first(where: { $0.identifier?.rawValue == "tile.brand" }),
           let clock = viewDescendants(root).compactMap({ $0 as? NSTextField }).first(where: { $0.identifier?.rawValue == "tile.clock" }) else {
-        fputs("Four-pane check: plus button is missing\n", stderr)
+        fputs("Four-pane check: toolbar control or logo is missing\n", stderr)
         return false
     }
     controller.window?.setContentSize(NSSize(width: 1600, height: 900))
     RunLoop.current.run(until: Date().addingTimeInterval(0.1))
     root.layoutSubtreeIfNeeded()
     let settingsFrame = settings.convert(settings.bounds, to: root)
+    let brandFrame = brand.convert(brand.bounds, to: root)
     guard settingsFrame.maxX >= root.bounds.maxX - 20,
+          brandFrame.width >= 70,
+          brandFrame.minX >= 0,
+          TileBrand.image.size.width > 0,
           [TileClock.label(for: Date()), TileClock.label(for: Date().addingTimeInterval(-60))].contains(clock.stringValue) else {
         fputs("Wide-window toolbar alignment failed: settings at \(settingsFrame.maxX), edge \(root.bounds.maxX)\n", stderr)
         return false

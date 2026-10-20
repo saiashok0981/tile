@@ -11,6 +11,11 @@ fi
 mkdir -p "${app_dir}/Contents/MacOS"
 mkdir -p "${app_dir}/Contents/Resources/Licenses"
 cp .build/release/Tile "${app_dir}/Contents/MacOS/Tile"
+cp -R .build/release/Tile_Tile.bundle "${app_dir}/Contents/Resources/"
+iconset="${PWD}/dist/Tile.iconset"
+mkdir -p "${iconset}"
+swift scripts/render-icon.swift Sources/Tile/Resources/TileLogo.png "${iconset}"
+iconutil -c icns "${iconset}" -o "${app_dir}/Contents/Resources/Tile.icns"
 cp LICENSE "${app_dir}/Contents/Resources/Licenses/Tile.txt"
 cp .build/checkouts/SwiftTerm/LICENSE "${app_dir}/Contents/Resources/Licenses/SwiftTerm.txt"
 cp .build/checkouts/swift-png/LICENSE "${app_dir}/Contents/Resources/Licenses/swift-png.txt"
@@ -25,6 +30,7 @@ cat > "${app_dir}/Contents/Info.plist" <<'PLIST'
   <key>CFBundleIdentifier</key><string>dev.tile.app</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundleName</key><string>Tile</string>
+  <key>CFBundleIconFile</key><string>Tile.icns</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundleVersion</key><string>1</string>

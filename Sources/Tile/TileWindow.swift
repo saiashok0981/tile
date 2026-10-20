@@ -248,6 +248,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     var allowClose = false
     private let root = TileRootView()
     private let toolbar = NSStackView()
+    private let brand = TileBrandView()
     private let tabs = NSStackView()
     private let toolbarSpacer = NSView()
     private let clockLabel = NSTextField(labelWithString: "")
@@ -278,6 +279,9 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         toolbar.orientation = .horizontal
         toolbar.distribution = .fill
         toolbar.spacing = 8
+        brand.identifier = NSUserInterfaceItemIdentifier("tile.brand")
+        brand.setContentHuggingPriority(.required, for: .horizontal)
+        toolbar.addArrangedSubview(brand)
         tabs.orientation = .horizontal
         tabs.spacing = 3
         toolbar.addArrangedSubview(tabs)
@@ -302,7 +306,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
             toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
             toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10),
             toolbar.topAnchor.constraint(equalTo: root.topAnchor, constant: 8),
-            toolbar.heightAnchor.constraint(equalToConstant: 30),
+            toolbar.heightAnchor.constraint(equalToConstant: 38),
             content.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 8),
             content.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: root.trailingAnchor),

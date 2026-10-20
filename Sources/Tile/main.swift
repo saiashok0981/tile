@@ -168,6 +168,7 @@ final class TileApp: NSObject, NSApplicationDelegate {
 
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
+app.applicationIconImage = TileBrand.appIcon
 if CommandLine.arguments.contains("--smoke-test") {
     exit(runSmokeTest() ? 0 : 1)
 } else if CommandLine.arguments.contains("--layout-test") {

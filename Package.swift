@@ -9,6 +9,6 @@ let package = Package(
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.99.0")
     ],
     targets: [
-        .executableTarget(name: "Tile", dependencies: ["SwiftTerm"])
+        .executableTarget(name: "Tile", dependencies: ["SwiftTerm"], resources: [.copy("Resources/TileLogo.png")])
     ]
 )

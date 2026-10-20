@@ -2,6 +2,8 @@
 
 Tile is an open-source macOS terminal workspace. It keeps up to four live shells visible per workspace and lets you move a terminal between windows without restarting its process.
 
+Download the current Apple Silicon preview at [tile-terminal-workspace.tinyyew1024.chatgpt.site](https://tile-terminal-workspace.tinyyew1024.chatgpt.site). It is not yet Developer ID signed or notarized, so macOS may block it on first launch.
+
 ## Build
 
 Requires an Apple Silicon Mac, macOS 15 or later, and Swift 6.2 or later with the macOS command line tools. Run:
