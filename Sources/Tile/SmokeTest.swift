@@ -9,8 +9,13 @@ func viewDescendants(_ view: NSView) -> [NSView] {
 func runFourPaneLayoutTest() -> Bool {
     _ = NSApplication.shared
     let previousGap = UserDefaults.standard.object(forKey: "paneGap")
+    let previousTransparency = UserDefaults.standard.object(forKey: "transparentPaneGaps")
     UserDefaults.standard.set(16, forKey: "paneGap")
-    defer { UserDefaults.standard.set(previousGap, forKey: "paneGap") }
+    UserDefaults.standard.set(true, forKey: "transparentPaneGaps")
+    defer {
+        UserDefaults.standard.set(previousGap, forKey: "paneGap")
+        UserDefaults.standard.set(previousTransparency, forKey: "transparentPaneGaps")
+    }
     let app = TileApp()
     app.newWindow()
     let controller = app.windows[0]
@@ -20,8 +25,17 @@ func runFourPaneLayoutTest() -> Bool {
         controller.window?.close()
     }
     guard let root = controller.window?.contentView,
-          let plus = viewDescendants(root).compactMap({ $0 as? NSButton }).first(where: { $0.title == "+" }) else {
+          let plus = viewDescendants(root).compactMap({ $0 as? NSButton }).first(where: { $0.title == "+" }),
+          let settings = viewDescendants(root).compactMap({ $0 as? NSButton }).first(where: { $0.title == "⚙" }) else {
         fputs("Four-pane check: plus button is missing\n", stderr)
+        return false
+    }
+    controller.window?.setContentSize(NSSize(width: 1600, height: 900))
+    RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    root.layoutSubtreeIfNeeded()
+    let settingsFrame = settings.convert(settings.bounds, to: root)
+    guard settingsFrame.maxX >= root.bounds.maxX - 20 else {
+        fputs("Wide-window toolbar alignment failed: settings at \(settingsFrame.maxX), edge \(root.bounds.maxX)\n", stderr)
         return false
     }
     plus.performClick(nil)
@@ -40,8 +54,12 @@ func runFourPaneLayoutTest() -> Bool {
     let terminals = viewDescendants(root).compactMap { $0 as? SelectableTerminalView }
     let frames = terminals.map { $0.convert($0.bounds, to: nil) }
     let paneFrames = viewDescendants(root).compactMap { $0 as? PaneView }.map { $0.convert($0.bounds, to: nil) }
+    let gapSurfaces = viewDescendants(root).compactMap { $0 as? DropSurface }
     guard terminals.count == 4,
           paneFrames.count == 4,
+          controller.window?.isOpaque == false,
+          controller.window?.backgroundColor.alphaComponent == 0,
+          gapSurfaces.allSatisfy({ ($0.layer?.backgroundColor?.alpha ?? 0) == 0 }),
           paneFrames[1].minX - paneFrames[0].maxX >= 14,
           paneFrames[0].minY - paneFrames[2].maxY >= 14,
           frames.allSatisfy({ $0.width > 100 && $0.height > 100 }),
@@ -50,6 +68,13 @@ func runFourPaneLayoutTest() -> Bool {
               ((i + 1)..<4).allSatisfy { j in frames[i].intersection(frames[j]).isEmpty }
           }) else {
         fputs("Four-pane check failed: \(terminals.count) views, frames \(frames)\n", stderr)
+        return false
+    }
+    UserDefaults.standard.set(false, forKey: "transparentPaneGaps")
+    controller.render()
+    guard controller.window?.isOpaque == true,
+          controller.window?.backgroundColor.alphaComponent == 1 else {
+        fputs("Opaque gap setting check failed\n", stderr)
         return false
     }
     print("Four-pane layout check passed: four visible, non-overlapping terminals")

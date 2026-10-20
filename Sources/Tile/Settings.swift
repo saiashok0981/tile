@@ -5,6 +5,7 @@ enum PaneLayout {
         let saved = UserDefaults.standard.object(forKey: "paneGap") as? Int ?? 8
         return CGFloat(min(max(saved, 0), 24))
     }
+    static var transparentGaps: Bool { UserDefaults.standard.bool(forKey: "transparentPaneGaps") }
 }
 
 enum TerminalTheme: String, CaseIterable {
@@ -135,6 +136,7 @@ enum Shortcuts {
 final class SettingsWindow: NSWindowController {
     private let dragCheck = NSButton(checkboxWithTitle: "Enable dragging panes", target: nil, action: nil)
     private let titlesCheck = NSButton(checkboxWithTitle: "Show pane titles", target: nil, action: nil)
+    private let transparentGapsCheck = NSButton(checkboxWithTitle: "Transparent gaps between terminals", target: nil, action: nil)
     private let fontSize = NSTextField()
     private let themePicker = NSPopUpButton()
     private let paneGap = NSTextField()
@@ -172,6 +174,10 @@ final class SettingsWindow: NSWindowController {
         paneGap.frame = NSRect(x: 270, y: y, width: 210, height: 23)
         paneGap.stringValue = String(Int(PaneLayout.gap))
         form.addSubview(paneGap)
+        y -= 30
+        transparentGapsCheck.frame = NSRect(x: 20, y: y, width: 320, height: 22)
+        transparentGapsCheck.state = PaneLayout.transparentGaps ? .on : .off
+        form.addSubview(transparentGapsCheck)
         y -= 30
         label("Terminal colors")
         themePicker.frame = NSRect(x: 270, y: y, width: 210, height: 25)
@@ -227,6 +233,7 @@ final class SettingsWindow: NSWindowController {
         defaults.set(titlesCheck.state == .on, forKey: "showPaneTitles")
         defaults.set(size, forKey: "fontSize")
         defaults.set(gap, forKey: "paneGap")
+        defaults.set(transparentGapsCheck.state == .on, forKey: "transparentPaneGaps")
         defaults.set(TerminalTheme.allCases[themePicker.indexOfSelectedItem].rawValue, forKey: "terminalTheme")
         defaults.set(shellPath.stringValue, forKey: "shellPath")
         for (action, value) in values { defaults.set(value, forKey: "shortcut.\(action.rawValue)") }

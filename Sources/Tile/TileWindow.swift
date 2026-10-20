@@ -26,6 +26,10 @@ final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
 
+    override func drawDivider(in rect: NSRect) {
+        if !PaneLayout.transparentGaps { super.drawDivider(in: rect) }
+    }
+
     override func layout() {
         super.layout()
         let length = isVertical ? bounds.width : bounds.height
@@ -181,6 +185,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     private let root = NSView()
     private let toolbar = NSStackView()
     private let tabs = NSStackView()
+    private let toolbarSpacer = NSView()
     private let content = DropSurface(frame: .zero)
     private let plus = NSButton(title: "+", target: nil, action: nil)
     private let focus = NSButton(title: "Focus", target: nil, action: nil)
@@ -196,14 +201,20 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         window.delegate = self
         window.contentView = root
+        root.wantsLayer = true
+        toolbar.wantsLayer = true
+        content.wantsLayer = true
         content.owner = self
         root.addSubview(toolbar)
         root.addSubview(content)
         toolbar.orientation = .horizontal
+        toolbar.distribution = .fill
         toolbar.spacing = 8
         tabs.orientation = .horizontal
         tabs.spacing = 3
         toolbar.addArrangedSubview(tabs)
+        toolbarSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        toolbar.addArrangedSubview(toolbarSpacer)
         for (button, action) in [(plus, #selector(addPane)), (focus, #selector(toggleFocus)), (settings, #selector(openSettings))] {
             button.target = self
             button.action = action
@@ -254,6 +265,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     }
     func render() {
         guard window != nil else { return }
+        applyGapAppearance()
         tabs.arrangedSubviews.forEach { tabs.removeArrangedSubview($0); $0.removeFromSuperview() }
         for index in workspaces.indices {
             let button = NSButton(title: "\(index + 1)", target: self, action: #selector(selectTab(_:)))
@@ -280,7 +292,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
             pane.translatesAutoresizingMaskIntoConstraints = false
             let gap = PaneLayout.gap
             drop.wantsLayer = true
-            drop.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+            drop.layer?.backgroundColor = (PaneLayout.transparentGaps ? NSColor.clear : NSColor.windowBackgroundColor).cgColor
             NSLayoutConstraint.activate([
                 pane.leadingAnchor.constraint(equalTo: drop.leadingAnchor, constant: gap / 2),
                 pane.trailingAnchor.constraint(equalTo: drop.trailingAnchor, constant: -gap / 2),
@@ -306,6 +318,14 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
             body.topAnchor.constraint(equalTo: content.topAnchor), body.bottomAnchor.constraint(equalTo: content.bottomAnchor)
         ])
         window?.title = "Tile — Workspace \(selectedWorkspace + 1)"
+    }
+    private func applyGapAppearance() {
+        let transparent = PaneLayout.transparentGaps
+        window?.isOpaque = !transparent
+        window?.backgroundColor = transparent ? .clear : .windowBackgroundColor
+        root.layer?.backgroundColor = (transparent ? NSColor.clear : NSColor.windowBackgroundColor).cgColor
+        content.layer?.backgroundColor = (transparent ? NSColor.clear : NSColor.windowBackgroundColor).cgColor
+        toolbar.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
     }
     private func split(_ views: [NSView], vertical: Bool, ratio: CGFloat, onChange: @escaping (CGFloat) -> Void) -> NSView {
         guard views.count > 1 else { return views[0] }
