@@ -1,5 +1,12 @@
 import AppKit
 
+enum PaneLayout {
+    static var gap: CGFloat {
+        let saved = UserDefaults.standard.object(forKey: "paneGap") as? Int ?? 8
+        return CGFloat(min(max(saved, 0), 24))
+    }
+}
+
 enum TileAction: String, CaseIterable {
     case newPane, focusPane, nextWorkspace, previousWorkspace
     case focusLeft, focusRight, focusUp, focusDown
@@ -102,6 +109,7 @@ final class SettingsWindow: NSWindowController {
     private let dragCheck = NSButton(checkboxWithTitle: "Enable dragging panes", target: nil, action: nil)
     private let titlesCheck = NSButton(checkboxWithTitle: "Show pane titles", target: nil, action: nil)
     private let fontSize = NSTextField()
+    private let paneGap = NSTextField()
     private let shellPath = NSTextField()
     private var shortcutFields: [TileAction: NSTextField] = [:]
     var onSave: (() -> Void)?
@@ -131,6 +139,11 @@ final class SettingsWindow: NSWindowController {
         titlesCheck.frame = NSRect(x: 20, y: y, width: 260, height: 22)
         titlesCheck.state = UserDefaults.standard.object(forKey: "showPaneTitles") as? Bool == false ? .off : .on
         form.addSubview(titlesCheck)
+        y -= 30
+        label("Gap between terminals (0–24 pt)")
+        paneGap.frame = NSRect(x: 270, y: y, width: 210, height: 23)
+        paneGap.stringValue = String(Int(PaneLayout.gap))
+        form.addSubview(paneGap)
         y -= 30
         label("Font size")
         fontSize.frame = NSRect(x: 270, y: y, width: 210, height: 23)
@@ -173,11 +186,13 @@ final class SettingsWindow: NSWindowController {
             return
         }
         guard let size = Int(fontSize.stringValue), (9...36).contains(size) else { showError("Font size must be 9–36."); return }
+        guard let gap = Int(paneGap.stringValue), (0...24).contains(gap) else { showError("Terminal gap must be 0–24 points."); return }
         guard FileManager.default.isExecutableFile(atPath: shellPath.stringValue) else { showError("Shell path must be executable."); return }
         let defaults = UserDefaults.standard
         defaults.set(dragCheck.state == .on, forKey: "dragEnabled")
         defaults.set(titlesCheck.state == .on, forKey: "showPaneTitles")
         defaults.set(size, forKey: "fontSize")
+        defaults.set(gap, forKey: "paneGap")
         defaults.set(shellPath.stringValue, forKey: "shellPath")
         for (action, value) in values { defaults.set(value, forKey: "shortcut.\(action.rawValue)") }
         onSave?()

@@ -1,7 +1,7 @@
 import AppKit
 
 struct WorkspaceSnapshot: Codable {
-    struct Pane: Codable { let id: UUID; let directory: String }
+    struct Pane: Codable { let id: UUID; let directory: String; let customTitle: String? }
     struct Group: Codable {
         let id: UUID
         let panes: [Pane]
@@ -26,7 +26,7 @@ extension TileApp {
             let groups = controller.workspaces.map { workspace in
                 WorkspaceSnapshot.Group(id: workspace.id, panes: workspace.panes.map { session in
                     session.refreshDirectory()
-                    return WorkspaceSnapshot.Pane(id: session.id, directory: session.directory)
+                    return WorkspaceSnapshot.Pane(id: session.id, directory: session.directory, customTitle: session.customTitle)
                 }, topRatio: Double(workspace.topRatio), bottomRatio: Double(workspace.bottomRatio), rowRatio: Double(workspace.rowRatio))
             }
             return WorkspaceSnapshot.Window(id: controller.id, frame: NSStringFromRect(frame), selectedWorkspace: controller.selectedWorkspace, workspaces: groups)
@@ -40,7 +40,11 @@ extension TileApp {
               !snapshot.windows.isEmpty else { return false }
         for saved in snapshot.windows {
             let groups = saved.workspaces.map { group in
-                let workspace = Workspace(id: group.id, panes: group.panes.map { TerminalSession(id: $0.id, directory: $0.directory) })
+                let workspace = Workspace(id: group.id, panes: group.panes.map { pane in
+                    let session = TerminalSession(id: pane.id, directory: pane.directory)
+                    session.customTitle = pane.customTitle
+                    return session
+                })
                 workspace.topRatio = CGFloat(group.topRatio ?? 0.5)
                 workspace.bottomRatio = CGFloat(group.bottomRatio ?? 0.5)
                 workspace.rowRatio = CGFloat(group.rowRatio ?? 0.5)

@@ -16,7 +16,10 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     let view: SelectableTerminalView
     var directory: String
     var title = "Terminal"
+    var customTitle: String?
     var onChange: (() -> Void)?
+
+    var displayTitle: String { customTitle ?? title }
 
     init(id: UUID = UUID(), directory: String) {
         self.id = id

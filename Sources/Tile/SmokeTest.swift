@@ -1,8 +1,16 @@
 import AppKit
 
 @MainActor
+func viewDescendants(_ view: NSView) -> [NSView] {
+    [view] + view.subviews.flatMap(viewDescendants)
+}
+
+@MainActor
 func runFourPaneLayoutTest() -> Bool {
     _ = NSApplication.shared
+    let previousGap = UserDefaults.standard.object(forKey: "paneGap")
+    UserDefaults.standard.set(16, forKey: "paneGap")
+    defer { UserDefaults.standard.set(previousGap, forKey: "paneGap") }
     let app = TileApp()
     app.newWindow()
     let controller = app.windows[0]
@@ -11,18 +19,15 @@ func runFourPaneLayoutTest() -> Bool {
         controller.allSessions.forEach { $0.view.terminate() }
         controller.window?.close()
     }
-    func descendants(_ view: NSView) -> [NSView] {
-        [view] + view.subviews.flatMap(descendants)
-    }
     guard let root = controller.window?.contentView,
-          let plus = descendants(root).compactMap({ $0 as? NSButton }).first(where: { $0.title == "+" }) else {
+          let plus = viewDescendants(root).compactMap({ $0 as? NSButton }).first(where: { $0.title == "+" }) else {
         fputs("Four-pane check: plus button is missing\n", stderr)
         return false
     }
     plus.performClick(nil)
     RunLoop.current.run(until: Date().addingTimeInterval(0.1))
     controller.window?.contentView?.layoutSubtreeIfNeeded()
-    let firstFrames = descendants(root).compactMap { $0 as? SelectableTerminalView }.map { $0.convert($0.bounds, to: nil) }
+    let firstFrames = viewDescendants(root).compactMap { $0 as? SelectableTerminalView }.map { $0.convert($0.bounds, to: nil) }
     guard firstFrames.count == 2,
           firstFrames.allSatisfy({ $0.width > 100 && $0.height > 100 }),
           firstFrames[0].intersection(firstFrames[1]).isEmpty else {
@@ -32,9 +37,13 @@ func runFourPaneLayoutTest() -> Bool {
     for _ in 0..<2 { plus.performClick(nil) }
     RunLoop.current.run(until: Date().addingTimeInterval(0.1))
     controller.window?.contentView?.layoutSubtreeIfNeeded()
-    let terminals = descendants(root).compactMap { $0 as? SelectableTerminalView }
+    let terminals = viewDescendants(root).compactMap { $0 as? SelectableTerminalView }
     let frames = terminals.map { $0.convert($0.bounds, to: nil) }
+    let paneFrames = viewDescendants(root).compactMap { $0 as? PaneView }.map { $0.convert($0.bounds, to: nil) }
     guard terminals.count == 4,
+          paneFrames.count == 4,
+          paneFrames[1].minX - paneFrames[0].maxX >= 14,
+          paneFrames[0].minY - paneFrames[2].maxY >= 14,
           frames.allSatisfy({ $0.width > 100 && $0.height > 100 }),
           frames.allSatisfy({ root.bounds.contains($0) }),
           (0..<4).allSatisfy({ i in
@@ -109,6 +118,17 @@ func runSmokeTest() -> Bool {
         fputs("Running command detection failed\n", stderr)
         return false
     }
+    if let content = destination.window?.contentView,
+       let runningView = viewDescendants(content).compactMap({ $0 as? PaneView }).first(where: { $0.session === runningPane }) {
+        runningView.updateActivity()
+        guard runningView.layer?.borderWidth == 2 else {
+            fputs("Running command border check failed\n", stderr)
+            return false
+        }
+    } else {
+        fputs("Running pane view missing\n", stderr)
+        return false
+    }
 
     let topRight = destination.workspace.panes[1]
     destination.selectedPane = topRight.id
@@ -146,6 +166,8 @@ func runSmokeTest() -> Bool {
     }
 
     app.saveWorkspace()
+    runningPane.customTitle = "dev api"
+    app.saveWorkspace()
     let restored = TileApp()
     guard restored.restoreWorkspace() else { fputs("Workspace restore failed\n", stderr); return false }
     defer {
@@ -156,6 +178,7 @@ func runSmokeTest() -> Bool {
         }
     }
     guard restored.windows.count == 2,
+          restored.windows[1].allSessions.contains(where: { $0.customTitle == "dev api" }),
           restored.windows[1].allSessions.contains(where: { $0.directory == "/private/tmp" }),
           restored.windows[1].allSessions.allSatisfy({ $0.view.process.running }) else {
         fputs("Restored window or shell check failed\n", stderr)

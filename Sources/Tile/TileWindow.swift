@@ -48,6 +48,7 @@ final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
 final class PaneHeader: NSView, NSDraggingSource {
     weak var owner: TileApp?
     let session: TerminalSession
+    var onRename: (() -> Void)?
     private var startPoint: NSPoint?
     init(session: TerminalSession, owner: TileApp) {
         self.session = session
@@ -58,6 +59,7 @@ final class PaneHeader: NSView, NSDraggingSource {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
     override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 { onRename?(); return }
         startPoint = convert(event.locationInWindow, from: nil)
         owner?.select(session)
     }
@@ -73,7 +75,7 @@ final class PaneHeader: NSView, NSDraggingSource {
         image.lockFocus()
         NSColor.controlBackgroundColor.setFill()
         NSRect(x: 0, y: 0, width: 160, height: 30).fill()
-        session.title.draw(at: NSPoint(x: 8, y: 7), withAttributes: [.foregroundColor: NSColor.labelColor])
+        session.displayTitle.draw(at: NSPoint(x: 8, y: 7), withAttributes: [.foregroundColor: NSColor.labelColor])
         image.unlockFocus()
         item.setDraggingFrame(NSRect(x: point.x, y: point.y, width: 160, height: 30), contents: image)
         beginDraggingSession(with: [item], event: event, source: self)
@@ -90,36 +92,59 @@ final class PaneView: NSView {
     let session: TerminalSession
     let header: PaneHeader
     private let title = NSTextField(labelWithString: "")
+    private let renameButton = NSButton(title: "✎", target: nil, action: nil)
     private let close = NSButton(title: "×", target: nil, action: nil)
+    private var activityTimer: Timer?
     var onClose: (() -> Void)?
+    var onRename: (() -> Void)?
     init(session: TerminalSession, owner: TileApp) {
         self.session = session
         header = PaneHeader(session: session, owner: owner)
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = NSColor.black.cgColor
-        title.stringValue = session.title
+        title.stringValue = session.displayTitle
         title.lineBreakMode = .byTruncatingTail
         close.bezelStyle = .inline
+        renameButton.bezelStyle = .inline
+        renameButton.target = self
+        renameButton.action = #selector(renamePane)
+        renameButton.toolTip = "Rename terminal"
         close.target = self
         close.action = #selector(closePane)
         addSubview(header)
+        header.onRename = { [weak self] in self?.onRename?() }
         header.addSubview(title)
+        header.addSubview(renameButton)
         header.addSubview(close)
         addSubview(session.view)
-        session.onChange = { [weak self] in self?.title.stringValue = session.title }
+        session.onChange = { [weak self] in self?.title.stringValue = session.displayTitle }
+        updateActivity()
+        activityTimer = Timer.scheduledTimer(timeInterval: 1.5, target: self, selector: #selector(refreshActivity), userInfo: nil, repeats: true)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        if superview == nil { activityTimer?.invalidate(); activityTimer = nil }
+    }
     override func layout() {
         super.layout()
         let headerHeight: CGFloat = 28
         header.frame = NSRect(x: 0, y: bounds.height - headerHeight, width: bounds.width, height: headerHeight)
         title.isHidden = UserDefaults.standard.object(forKey: "showPaneTitles") as? Bool == false
-        title.frame = NSRect(x: 8, y: 4, width: max(0, bounds.width - 48), height: 20)
+        title.frame = NSRect(x: 8, y: 4, width: max(0, bounds.width - 78), height: 20)
+        renameButton.frame = NSRect(x: max(0, bounds.width - 60), y: 3, width: 26, height: 22)
         close.frame = NSRect(x: max(0, bounds.width - 30), y: 3, width: 26, height: 22)
         session.view.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - headerHeight))
     }
     @objc private func closePane() { onClose?() }
+    @objc private func renamePane() { onRename?() }
+    @objc private func refreshActivity() { updateActivity() }
+    func updateActivity() {
+        let running = session.hasRunningCommand
+        layer?.borderWidth = running ? 2 : 0
+        layer?.borderColor = running ? NSColor.systemGreen.cgColor : nil
+    }
 }
 
 @MainActor
@@ -247,11 +272,17 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
             }
             let pane = PaneView(session: session, owner: app)
             pane.onClose = { [weak self] in self?.close(session) }
+            pane.onRename = { [weak self] in self?.rename(session) }
             drop.addSubview(pane)
             pane.translatesAutoresizingMaskIntoConstraints = false
+            let gap = PaneLayout.gap
+            drop.wantsLayer = true
+            drop.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
             NSLayoutConstraint.activate([
-                pane.leadingAnchor.constraint(equalTo: drop.leadingAnchor), pane.trailingAnchor.constraint(equalTo: drop.trailingAnchor),
-                pane.topAnchor.constraint(equalTo: drop.topAnchor), pane.bottomAnchor.constraint(equalTo: drop.bottomAnchor)
+                pane.leadingAnchor.constraint(equalTo: drop.leadingAnchor, constant: gap / 2),
+                pane.trailingAnchor.constraint(equalTo: drop.trailingAnchor, constant: -gap / 2),
+                pane.topAnchor.constraint(equalTo: drop.topAnchor, constant: gap / 2),
+                pane.bottomAnchor.constraint(equalTo: drop.bottomAnchor, constant: -gap / 2)
             ])
             return drop
         }
@@ -286,6 +317,22 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     func close(_ session: TerminalSession) {
         guard app?.confirmClose([session]) == true else { return }
         remove(session, terminate: true)
+        app?.saveWorkspace()
+    }
+    func rename(_ session: TerminalSession) {
+        let alert = NSAlert()
+        alert.messageText = "Name this terminal"
+        alert.informativeText = "Double-click its header to change the name again. Leave it blank to use the terminal title."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = session.customTitle ?? ""
+        field.placeholderString = session.title
+        alert.accessoryView = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        session.customTitle = name.isEmpty ? nil : name
+        session.onChange?()
         app?.saveWorkspace()
     }
     func selectWorkspace(_ index: Int) {

@@ -17,8 +17,10 @@ The script builds `dist/Tile.app` and `dist/Tile-macOS-arm64.zip`. It uses an ad
 - Click **+** or press `Command-N` to add a terminal. The fifth pane starts another numbered workspace.
 - Click a workspace number, or use `Command-Option-Left/Right` to switch. `Command-Option-1` through `9` selects a numbered workspace.
 - Drag a pane by its header to rearrange it, move it into another Tile window, or make a new window on another monitor.
+- Click the pencil in a pane header, or double-click the header, to give that terminal a name such as `dev`, `api`, or `codex`. An empty name restores the terminal-provided title. Names are restored after relaunch.
+- A green border marks a pane while a command is running. This includes AI agents and other foreground commands; it does not attempt to identify the type of command.
 - Click **Focus** or press `Command-Shift-F` to expand a pane. Escape restores the split layout.
-- Open **⚙** to change shortcuts, shell path, font size, pane-title visibility, and drag behavior.
+- Open **⚙** to change shortcuts, shell path, font size, the gap between panes, pane-title visibility, and drag behavior.
 - `Command-Option-Space` brings the most recent Tile window forward from another app.
 
 The app restores window and workspace layouts with fresh shells after relaunch. It does not keep commands running after quitting.
