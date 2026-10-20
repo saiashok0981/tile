@@ -10,7 +10,7 @@ Requires an Apple Silicon Mac, macOS 15 or later, and Swift 6.2 or later with th
 ./scripts/build-app.sh
 ```
 
-The script builds `dist/Tile.app`. It uses an ad hoc signature for local use; a public distribution needs Developer ID signing and notarization.
+The script builds `dist/Tile.app` and `dist/Tile-macOS-arm64.zip`. It uses an ad hoc signature for local use; a public distribution needs Developer ID signing and notarization.
 
 ## Use
 

@@ -5,6 +5,8 @@ enum TileAction: String, CaseIterable {
     case focusLeft, focusRight, focusUp, focusDown
     case swapLeft, swapRight, swapUp, swapDown
     case moveToNextWorkspace, raiseWindow
+    case workspace1, workspace2, workspace3, workspace4, workspace5
+    case workspace6, workspace7, workspace8, workspace9
 
     var title: String {
         switch self {
@@ -22,6 +24,15 @@ enum TileAction: String, CaseIterable {
         case .swapDown: "Swap down"
         case .moveToNextWorkspace: "Move pane to next workspace"
         case .raiseWindow: "Show Tile from another app"
+        case .workspace1: "Workspace 1"
+        case .workspace2: "Workspace 2"
+        case .workspace3: "Workspace 3"
+        case .workspace4: "Workspace 4"
+        case .workspace5: "Workspace 5"
+        case .workspace6: "Workspace 6"
+        case .workspace7: "Workspace 7"
+        case .workspace8: "Workspace 8"
+        case .workspace9: "Workspace 9"
         }
     }
     var defaultShortcut: String {
@@ -40,6 +51,15 @@ enum TileAction: String, CaseIterable {
         case .swapDown: "cmd+ctrl+shift+down"
         case .moveToNextWorkspace: "cmd+ctrl+shift+return"
         case .raiseWindow: "cmd+option+space"
+        case .workspace1: "cmd+option+1"
+        case .workspace2: "cmd+option+2"
+        case .workspace3: "cmd+option+3"
+        case .workspace4: "cmd+option+4"
+        case .workspace5: "cmd+option+5"
+        case .workspace6: "cmd+option+6"
+        case .workspace7: "cmd+option+7"
+        case .workspace8: "cmd+option+8"
+        case .workspace9: "cmd+option+9"
         }
     }
     var shortcut: String { UserDefaults.standard.string(forKey: "shortcut.\(rawValue)") ?? defaultShortcut }
@@ -94,9 +114,9 @@ final class SettingsWindow: NSWindowController {
         root.hasVerticalScroller = true
         root.autoresizingMask = [.width, .height]
         window.contentView = root
-        let form = NSView(frame: NSRect(x: 0, y: 0, width: 510, height: 780))
+        let form = NSView(frame: NSRect(x: 0, y: 0, width: 510, height: 1100))
         root.documentView = form
-        var y: CGFloat = 742
+        var y: CGFloat = 1062
         func label(_ text: String, at x: CGFloat = 20, width: CGFloat = 240) {
             let view = NSTextField(labelWithString: text)
             view.frame = NSRect(x: x, y: y, width: width, height: 22)

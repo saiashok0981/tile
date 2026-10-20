@@ -63,6 +63,28 @@ func runSmokeTest() -> Bool {
         return false
     }
 
+    let otherPane = destination.workspace.panes.first!
+    let click = NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 10, y: 10),
+                                   modifierFlags: [], timestamp: 0,
+                                   windowNumber: destination.window?.windowNumber ?? 0,
+                                   context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+    otherPane.view.mouseDown(with: click)
+    guard destination.selectedPane == otherPane.id else {
+        fputs("Terminal focus did not select the pane\n", stderr)
+        return false
+    }
+    app.addPane(to: destination)
+    app.addPane(to: destination)
+    app.addPane(to: destination)
+    destination.movePaneToNextWorkspace()
+    destination.selectWorkspace(1)
+    destination.movePaneToNextWorkspace()
+    guard destination.selectedWorkspace == 1,
+          destination.workspace.panes.contains(where: { $0.id == destination.selectedPane }) else {
+        fputs("Moving the sole pane selected the wrong workspace\n", stderr)
+        return false
+    }
+
     app.saveWorkspace()
     let restored = TileApp()
     guard restored.restoreWorkspace() else { fputs("Workspace restore failed\n", stderr); return false }
@@ -79,6 +101,6 @@ func runSmokeTest() -> Bool {
         fputs("Restored window or shell check failed\n", stderr)
         return false
     }
-    print("Tile smoke test passed: overflow, live move, directory inheritance, running command detection, and relaunch restoration")
+    print("Tile smoke test passed: overflow, live move, directory inheritance, focus, workspace movement, command detection, and restoration")
     return true
 }

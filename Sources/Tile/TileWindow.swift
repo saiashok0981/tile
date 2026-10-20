@@ -168,10 +168,12 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     var allSessions: [TerminalSession] { workspaces.flatMap(\.panes) }
     var currentSession: TerminalSession? { workspace.panes.first { $0.id == selectedPane } ?? workspace.panes.first }
 
-    func add(_ session: TerminalSession) {
+    func add(_ session: TerminalSession, before target: TerminalSession? = nil) {
         if workspace.panes.count == 4 {
             workspaces.append(Workspace(panes: [session]))
             selectedWorkspace = workspaces.count - 1
+        } else if let target, let index = workspace.panes.firstIndex(where: { $0.id == target.id }) {
+            workspace.panes.insert(session, at: index)
         } else { workspace.panes.append(session) }
         selectedPane = session.id
         focused = false
@@ -200,11 +202,16 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         }
         content.subviews.forEach { $0.removeFromSuperview() }
         let sessions = focused ? workspace.panes.filter { $0.id == selectedPane } : workspace.panes
+        guard let app else { return }
         let panes = sessions.map { session -> DropSurface in
             let drop = DropSurface(frame: .zero)
             drop.owner = self
             drop.target = session
-            let pane = PaneView(session: session, owner: app!)
+            session.view.onSelect = { [weak app, weak session] in
+                guard let session else { return }
+                app?.select(session)
+            }
+            let pane = PaneView(session: session, owner: app)
             pane.onClose = { [weak self] in self?.close(session) }
             drop.addSubview(pane)
             pane.translatesAutoresizingMaskIntoConstraints = false
@@ -265,7 +272,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         let nextColumn = column + dx
         let nextRow = row + dy
         guard (0...1).contains(nextColumn), (0...1).contains(nextRow) else { return }
-        let next = nextRow * 2 + nextColumn
+        let next = workspace.panes.count == 3 && nextRow == 1 ? 2 : nextRow * 2 + nextColumn
         guard next < workspace.panes.count else { return }
         if swap { workspace.panes.swapAt(current, next); render() }
         selectedPane = workspace.panes[next].id

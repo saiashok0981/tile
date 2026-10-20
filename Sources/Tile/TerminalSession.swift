@@ -2,9 +2,18 @@ import AppKit
 import SwiftTerm
 
 @MainActor
+final class SelectableTerminalView: LocalProcessTerminalView {
+    var onSelect: (() -> Void)?
+    override func mouseDown(with event: NSEvent) {
+        onSelect?()
+        super.mouseDown(with: event)
+    }
+}
+
+@MainActor
 final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     let id: UUID
-    let view: LocalProcessTerminalView
+    let view: SelectableTerminalView
     var directory: String
     var title = "Terminal"
     var onChange: (() -> Void)?
@@ -12,7 +21,7 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     init(id: UUID = UUID(), directory: String) {
         self.id = id
         self.directory = directory
-        view = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 480, height: 320))
+        view = SelectableTerminalView(frame: NSRect(x: 0, y: 0, width: 480, height: 320))
         super.init()
         view.processDelegate = self
         let size = UserDefaults.standard.object(forKey: "fontSize") as? Int ?? 13

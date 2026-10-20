@@ -66,7 +66,7 @@ final class TileApp: NSObject, NSApplicationDelegate {
             return true
         }
         source.remove(session)
-        destination.add(session)
+        destination.add(session, before: target)
         saveWorkspace()
         return true
     }
@@ -113,10 +113,6 @@ final class TileApp: NSObject, NSApplicationDelegate {
     }
     private func handleShortcut(_ event: NSEvent) -> Bool {
         guard let shortcut = Shortcuts.from(event), let window = activeWindow else { return false }
-        if shortcut.hasPrefix("cmd+option+"), let number = Int(shortcut.split(separator: "+").last ?? "") {
-            window.selectWorkspace(number - 1)
-            return true
-        }
         guard let action = TileAction.allCases.first(where: { $0.shortcut == shortcut }) else { return false }
         switch action {
         case .newPane: addPane(to: window)
@@ -133,6 +129,15 @@ final class TileApp: NSObject, NSApplicationDelegate {
         case .swapDown: window.navigate(dx: 0, dy: 1, swap: true)
         case .moveToNextWorkspace: window.movePaneToNextWorkspace()
         case .raiseWindow: window.window?.makeKeyAndOrderFront(nil)
+        case .workspace1: window.selectWorkspace(0)
+        case .workspace2: window.selectWorkspace(1)
+        case .workspace3: window.selectWorkspace(2)
+        case .workspace4: window.selectWorkspace(3)
+        case .workspace5: window.selectWorkspace(4)
+        case .workspace6: window.selectWorkspace(5)
+        case .workspace7: window.selectWorkspace(6)
+        case .workspace8: window.selectWorkspace(7)
+        case .workspace9: window.selectWorkspace(8)
         }
         return true
     }
