@@ -4,6 +4,8 @@ Tile is an open-source macOS terminal workspace. It keeps up to four live shells
 
 Download the current Apple Silicon preview at [tile-terminal-workspace.tinyyew1024.chatgpt.site](https://tile-terminal-workspace.tinyyew1024.chatgpt.site). It is not yet Developer ID signed or notarized, so macOS may block it on first launch.
 
+The installable ZIP is also available in the [GitHub preview release](https://github.com/saiashok0981/tile/releases/tag/v0.1.0-preview.1).
+
 ## Build
 
 Requires an Apple Silicon Mac, macOS 15 or later, and Swift 6.2 or later with the macOS command line tools. Run:
