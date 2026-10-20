@@ -36,6 +36,8 @@ final class TileRootView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        NSColor.clear.setFill()
+        bounds.fill(using: .copy)
         NSColor.windowBackgroundColor.setFill()
         let background = NSBezierPath(rect: bounds)
         if PaneLayout.transparentGaps {
@@ -199,6 +201,7 @@ final class PaneView: NSView {
         renameButton.frame = NSRect(x: max(0, bounds.width - 60), y: 3, width: 26, height: 22)
         close.frame = NSRect(x: max(0, bounds.width - 30), y: 3, width: 26, height: 22)
         session.view.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - headerHeight))
+        if PaneLayout.transparentGaps { (window?.contentView as? TileRootView)?.needsDisplay = true }
     }
     @objc private func closePane() { onClose?() }
     @objc private func renamePane() { onRename?() }
@@ -388,7 +391,9 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     private func applyGapAppearance() {
         let transparent = PaneLayout.transparentGaps
         window?.isOpaque = !transparent
-        window?.backgroundColor = transparent ? .clear : .windowBackgroundColor
+        // A fully clear NSWindow background renders as a dark fallback on macOS;
+        // a tiny nonzero alpha keeps the desktop visible through the gap mask.
+        window?.backgroundColor = transparent ? NSColor.windowBackgroundColor.withAlphaComponent(0.01) : .windowBackgroundColor
         root.layer?.backgroundColor = NSColor.clear.cgColor
         content.layer?.backgroundColor = (transparent ? NSColor.clear : NSColor.windowBackgroundColor).cgColor
         toolbar.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor

@@ -8,13 +8,16 @@ func viewDescendants(_ view: NSView) -> [NSView] {
 @MainActor
 func runFourPaneLayoutTest() -> Bool {
     _ = NSApplication.shared
-    let previousGap = UserDefaults.standard.object(forKey: "paneGap")
-    let previousTransparency = UserDefaults.standard.object(forKey: "transparentPaneGaps")
-    UserDefaults.standard.set(16, forKey: "paneGap")
-    UserDefaults.standard.set(true, forKey: "transparentPaneGaps")
+    let defaults = UserDefaults.standard
+    let previousGap = defaults.object(forKey: "paneGap")
+    let previousTransparency = defaults.object(forKey: "transparentPaneGaps")
+    let previousSnapshot = defaults.data(forKey: "workspaceSnapshot")
+    defaults.set(16, forKey: "paneGap")
+    defaults.set(true, forKey: "transparentPaneGaps")
     defer {
-        UserDefaults.standard.set(previousGap, forKey: "paneGap")
-        UserDefaults.standard.set(previousTransparency, forKey: "transparentPaneGaps")
+        defaults.set(previousGap, forKey: "paneGap")
+        defaults.set(previousTransparency, forKey: "transparentPaneGaps")
+        defaults.set(previousSnapshot, forKey: "workspaceSnapshot")
     }
     let app = TileApp()
     app.newWindow()
@@ -58,13 +61,23 @@ func runFourPaneLayoutTest() -> Bool {
     let paneFrames = viewDescendants(root).compactMap { $0 as? PaneView }.map { $0.convert($0.bounds, to: nil) }
     let gapSurfaces = viewDescendants(root).compactMap { $0 as? DropSurface }
     let interiorGaps = root.interiorGapRects()
+    guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(root.bounds.width), pixelsHigh: Int(root.bounds.height), bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else {
+        fputs("Could not render the gap transparency check\n", stderr)
+        return false
+    }
+    root.cacheDisplay(in: root.bounds, to: bitmap)
+    let interiorPoint = interiorGaps.first.map { NSPoint(x: $0.midX, y: $0.midY) } ?? .zero
+    let gapAlpha = bitmap.colorAt(x: Int(interiorPoint.x), y: Int(interiorPoint.y))?.alphaComponent ?? 1
+    let outerAlpha = bitmap.colorAt(x: 2, y: Int(interiorPoint.y))?.alphaComponent ?? 0
     guard terminals.count == 4,
           paneFrames.count == 4,
           interiorGaps.count == 3,
+          gapAlpha < 0.05,
+          outerAlpha > 0.95,
           interiorGaps.allSatisfy({ $0.minX >= paneFrames.map(\.minX).min()! && $0.maxX <= paneFrames.map(\.maxX).max()! }),
           interiorGaps.allSatisfy({ $0.minY >= paneFrames.map(\.minY).min()! && $0.maxY <= paneFrames.map(\.maxY).max()! }),
           controller.window?.isOpaque == false,
-          controller.window?.backgroundColor.alphaComponent == 0,
+          (controller.window?.backgroundColor.alphaComponent ?? 1) <= 0.02,
           gapSurfaces.allSatisfy({ ($0.layer?.backgroundColor?.alpha ?? 0) == 0 }),
           paneFrames[1].minX - paneFrames[0].maxX >= 14,
           paneFrames[0].minY - paneFrames[2].maxY >= 14,
