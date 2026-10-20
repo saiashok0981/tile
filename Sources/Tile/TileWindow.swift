@@ -5,9 +5,42 @@ final class Workspace {
     let id: UUID
     var panes: [TerminalSession]
     var lastTopColumn = 0
+    var topRatio: CGFloat = 0.5
+    var bottomRatio: CGFloat = 0.5
+    var rowRatio: CGFloat = 0.5
     init(id: UUID = UUID(), panes: [TerminalSession] = []) {
         self.id = id
         self.panes = panes
+    }
+}
+
+@MainActor
+final class RatioSplitView: NSSplitView, NSSplitViewDelegate {
+    var ratio: CGFloat = 0.5
+    var onRatioChange: ((CGFloat) -> Void)?
+    private var initialized = false
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        delegate = self
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
+
+    override func layout() {
+        super.layout()
+        let length = isVertical ? bounds.width : bounds.height
+        guard !initialized, subviews.count == 2, length > dividerThickness else { return }
+        initialized = true
+        setPosition((length - dividerThickness) * ratio, ofDividerAt: 0)
+    }
+
+    func splitViewDidResizeSubviews(_ notification: Notification) {
+        guard initialized, subviews.count == 2 else { return }
+        let length = (isVertical ? bounds.width : bounds.height) - dividerThickness
+        guard length > 0 else { return }
+        let first = isVertical ? subviews[0].frame.width : subviews[0].frame.height
+        ratio = min(max(first / length, 0.1), 0.9)
+        onRatioChange?(ratio)
     }
 }
 
@@ -224,11 +257,13 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         }
         guard !panes.isEmpty else { return }
         let body: NSView
-        if panes.count <= 2 { body = split(panes, vertical: true, name: "\(id)-\(workspace.id)-top") }
+        if panes.count <= 2 {
+            body = split(panes, vertical: true, ratio: workspace.topRatio) { [workspace] in workspace.topRatio = $0 }
+        }
         else {
-            let top = split(Array(panes.prefix(2)), vertical: true, name: "\(id)-\(workspace.id)-top")
-            let bottom = split(Array(panes.dropFirst(2)), vertical: true, name: "\(id)-\(workspace.id)-bottom")
-            body = split([top, bottom], vertical: false, name: "\(id)-\(workspace.id)-rows")
+            let top = split(Array(panes.prefix(2)), vertical: true, ratio: workspace.topRatio) { [workspace] in workspace.topRatio = $0 }
+            let bottom = split(Array(panes.dropFirst(2)), vertical: true, ratio: workspace.bottomRatio) { [workspace] in workspace.bottomRatio = $0 }
+            body = split([top, bottom], vertical: false, ratio: workspace.rowRatio) { [workspace] in workspace.rowRatio = $0 }
         }
         content.addSubview(body)
         body.translatesAutoresizingMaskIntoConstraints = false
@@ -238,12 +273,13 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         ])
         window?.title = "Tile — Workspace \(selectedWorkspace + 1)"
     }
-    private func split(_ views: [NSView], vertical: Bool, name: String) -> NSView {
+    private func split(_ views: [NSView], vertical: Bool, ratio: CGFloat, onChange: @escaping (CGFloat) -> Void) -> NSView {
         guard views.count > 1 else { return views[0] }
-        let split = NSSplitView()
+        let split = RatioSplitView(frame: .zero)
         split.isVertical = vertical
         split.dividerStyle = .thin
-        split.autosaveName = name
+        split.ratio = ratio
+        split.onRatioChange = onChange
         views.forEach(split.addSubview)
         return split
     }

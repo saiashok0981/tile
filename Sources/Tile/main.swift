@@ -166,6 +166,8 @@ let app = NSApplication.shared
 app.setActivationPolicy(.regular)
 if CommandLine.arguments.contains("--smoke-test") {
     exit(runSmokeTest() ? 0 : 1)
+} else if CommandLine.arguments.contains("--layout-test") {
+    exit(runFourPaneLayoutTest() ? 0 : 1)
 } else {
     let delegate = TileApp()
     app.delegate = delegate

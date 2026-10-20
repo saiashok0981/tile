@@ -2,7 +2,13 @@ import AppKit
 
 struct WorkspaceSnapshot: Codable {
     struct Pane: Codable { let id: UUID; let directory: String }
-    struct Group: Codable { let id: UUID; let panes: [Pane] }
+    struct Group: Codable {
+        let id: UUID
+        let panes: [Pane]
+        let topRatio: Double?
+        let bottomRatio: Double?
+        let rowRatio: Double?
+    }
     struct Window: Codable {
         let id: UUID
         let frame: String
@@ -21,7 +27,7 @@ extension TileApp {
                 WorkspaceSnapshot.Group(id: workspace.id, panes: workspace.panes.map { session in
                     session.refreshDirectory()
                     return WorkspaceSnapshot.Pane(id: session.id, directory: session.directory)
-                })
+                }, topRatio: Double(workspace.topRatio), bottomRatio: Double(workspace.bottomRatio), rowRatio: Double(workspace.rowRatio))
             }
             return WorkspaceSnapshot.Window(id: controller.id, frame: NSStringFromRect(frame), selectedWorkspace: controller.selectedWorkspace, workspaces: groups)
         })
@@ -34,7 +40,11 @@ extension TileApp {
               !snapshot.windows.isEmpty else { return false }
         for saved in snapshot.windows {
             let groups = saved.workspaces.map { group in
-                Workspace(id: group.id, panes: group.panes.map { TerminalSession(id: $0.id, directory: $0.directory) })
+                let workspace = Workspace(id: group.id, panes: group.panes.map { TerminalSession(id: $0.id, directory: $0.directory) })
+                workspace.topRatio = CGFloat(group.topRatio ?? 0.5)
+                workspace.bottomRatio = CGFloat(group.bottomRatio ?? 0.5)
+                workspace.rowRatio = CGFloat(group.rowRatio ?? 0.5)
+                return workspace
             }
             let controller = TileWindow(id: saved.id, workspaces: groups, owner: self)
             windows.append(controller)

@@ -1,6 +1,53 @@
 import AppKit
 
 @MainActor
+func runFourPaneLayoutTest() -> Bool {
+    _ = NSApplication.shared
+    let app = TileApp()
+    app.newWindow()
+    let controller = app.windows[0]
+    defer {
+        controller.allowClose = true
+        controller.allSessions.forEach { $0.view.terminate() }
+        controller.window?.close()
+    }
+    func descendants(_ view: NSView) -> [NSView] {
+        [view] + view.subviews.flatMap(descendants)
+    }
+    guard let root = controller.window?.contentView,
+          let plus = descendants(root).compactMap({ $0 as? NSButton }).first(where: { $0.title == "+" }) else {
+        fputs("Four-pane check: plus button is missing\n", stderr)
+        return false
+    }
+    plus.performClick(nil)
+    RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    controller.window?.contentView?.layoutSubtreeIfNeeded()
+    let firstFrames = descendants(root).compactMap { $0 as? SelectableTerminalView }.map { $0.convert($0.bounds, to: nil) }
+    guard firstFrames.count == 2,
+          firstFrames.allSatisfy({ $0.width > 100 && $0.height > 100 }),
+          firstFrames[0].intersection(firstFrames[1]).isEmpty else {
+        fputs("Two-pane check failed: frames \(firstFrames)\n", stderr)
+        return false
+    }
+    for _ in 0..<2 { plus.performClick(nil) }
+    RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    controller.window?.contentView?.layoutSubtreeIfNeeded()
+    let terminals = descendants(root).compactMap { $0 as? SelectableTerminalView }
+    let frames = terminals.map { $0.convert($0.bounds, to: nil) }
+    guard terminals.count == 4,
+          frames.allSatisfy({ $0.width > 100 && $0.height > 100 }),
+          frames.allSatisfy({ root.bounds.contains($0) }),
+          (0..<4).allSatisfy({ i in
+              ((i + 1)..<4).allSatisfy { j in frames[i].intersection(frames[j]).isEmpty }
+          }) else {
+        fputs("Four-pane check failed: \(terminals.count) views, frames \(frames)\n", stderr)
+        return false
+    }
+    print("Four-pane layout check passed: four visible, non-overlapping terminals")
+    return true
+}
+
+@MainActor
 func runSmokeTest() -> Bool {
     let defaults = UserDefaults.standard
     let previousSnapshot = defaults.data(forKey: "workspaceSnapshot")
