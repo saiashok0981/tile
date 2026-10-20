@@ -55,7 +55,7 @@ final class PaneHeader: NSView, NSDraggingSource {
         self.owner = owner
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        layer?.backgroundColor = TerminalTheme.current.header.cgColor
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
     override func mouseDown(with event: NSEvent) {
@@ -73,9 +73,9 @@ final class PaneHeader: NSView, NSDraggingSource {
         let item = NSDraggingItem(pasteboardWriter: pasteboard)
         let image = NSImage(size: NSSize(width: 160, height: 30))
         image.lockFocus()
-        NSColor.controlBackgroundColor.setFill()
+        TerminalTheme.current.header.setFill()
         NSRect(x: 0, y: 0, width: 160, height: 30).fill()
-        session.displayTitle.draw(at: NSPoint(x: 8, y: 7), withAttributes: [.foregroundColor: NSColor.labelColor])
+        session.displayTitle.draw(at: NSPoint(x: 8, y: 7), withAttributes: [.foregroundColor: TerminalTheme.current.foreground])
         image.unlockFocus()
         item.setDraggingFrame(NSRect(x: point.x, y: point.y, width: 160, height: 30), contents: image)
         beginDraggingSession(with: [item], event: event, source: self)
@@ -102,11 +102,14 @@ final class PaneView: NSView {
         header = PaneHeader(session: session, owner: owner)
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = NSColor.black.cgColor
+        layer?.backgroundColor = TerminalTheme.current.background.cgColor
         title.stringValue = session.displayTitle
+        title.textColor = TerminalTheme.current.foreground
         title.lineBreakMode = .byTruncatingTail
         close.bezelStyle = .inline
+        close.contentTintColor = TerminalTheme.current.foreground
         renameButton.bezelStyle = .inline
+        renameButton.contentTintColor = TerminalTheme.current.foreground
         renameButton.target = self
         renameButton.action = #selector(renamePane)
         renameButton.toolTip = "Rename terminal"

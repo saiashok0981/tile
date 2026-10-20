@@ -7,6 +7,33 @@ enum PaneLayout {
     }
 }
 
+enum TerminalTheme: String, CaseIterable {
+    case oceanBlue, classicDark
+
+    static var current: TerminalTheme {
+        TerminalTheme(rawValue: UserDefaults.standard.string(forKey: "terminalTheme") ?? "") ?? .oceanBlue
+    }
+    var name: String {
+        switch self {
+        case .oceanBlue: "Ocean Blue"
+        case .classicDark: "Classic Dark"
+        }
+    }
+    var background: NSColor {
+        switch self {
+        case .oceanBlue: NSColor(srgbRed: 0.055, green: 0.13, blue: 0.22, alpha: 1)
+        case .classicDark: NSColor(srgbRed: 0.06, green: 0.065, blue: 0.075, alpha: 1)
+        }
+    }
+    var foreground: NSColor { NSColor(srgbRed: 0.89, green: 0.94, blue: 0.97, alpha: 1) }
+    var header: NSColor {
+        switch self {
+        case .oceanBlue: NSColor(srgbRed: 0.09, green: 0.19, blue: 0.29, alpha: 1)
+        case .classicDark: NSColor(srgbRed: 0.13, green: 0.14, blue: 0.16, alpha: 1)
+        }
+    }
+}
+
 enum TileAction: String, CaseIterable {
     case newPane, focusPane, nextWorkspace, previousWorkspace
     case focusLeft, focusRight, focusUp, focusDown
@@ -109,6 +136,7 @@ final class SettingsWindow: NSWindowController {
     private let dragCheck = NSButton(checkboxWithTitle: "Enable dragging panes", target: nil, action: nil)
     private let titlesCheck = NSButton(checkboxWithTitle: "Show pane titles", target: nil, action: nil)
     private let fontSize = NSTextField()
+    private let themePicker = NSPopUpButton()
     private let paneGap = NSTextField()
     private let shellPath = NSTextField()
     private var shortcutFields: [TileAction: NSTextField] = [:]
@@ -144,6 +172,12 @@ final class SettingsWindow: NSWindowController {
         paneGap.frame = NSRect(x: 270, y: y, width: 210, height: 23)
         paneGap.stringValue = String(Int(PaneLayout.gap))
         form.addSubview(paneGap)
+        y -= 30
+        label("Terminal colors")
+        themePicker.frame = NSRect(x: 270, y: y, width: 210, height: 25)
+        for theme in TerminalTheme.allCases { themePicker.addItem(withTitle: theme.name) }
+        themePicker.selectItem(at: TerminalTheme.allCases.firstIndex(of: .current) ?? 0)
+        form.addSubview(themePicker)
         y -= 30
         label("Font size")
         fontSize.frame = NSRect(x: 270, y: y, width: 210, height: 23)
@@ -193,6 +227,7 @@ final class SettingsWindow: NSWindowController {
         defaults.set(titlesCheck.state == .on, forKey: "showPaneTitles")
         defaults.set(size, forKey: "fontSize")
         defaults.set(gap, forKey: "paneGap")
+        defaults.set(TerminalTheme.allCases[themePicker.indexOfSelectedItem].rawValue, forKey: "terminalTheme")
         defaults.set(shellPath.stringValue, forKey: "shellPath")
         for (action, value) in values { defaults.set(value, forKey: "shortcut.\(action.rawValue)") }
         onSave?()

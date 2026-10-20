@@ -98,6 +98,7 @@ final class TileApp: NSObject, NSApplicationDelegate {
             let size = UserDefaults.standard.object(forKey: "fontSize") as? Int ?? 13
             self.windows.flatMap(\.allSessions).forEach {
                 $0.view.font = NSFont.monospacedSystemFont(ofSize: CGFloat(size), weight: .regular)
+                $0.applyTheme()
             }
             self.windows.forEach { $0.render() }
             _ = self.hotKey.register(TileAction.raiseWindow.shortcut)

@@ -60,7 +60,12 @@ func runFourPaneLayoutTest() -> Bool {
 func runSmokeTest() -> Bool {
     let defaults = UserDefaults.standard
     let previousSnapshot = defaults.data(forKey: "workspaceSnapshot")
-    defer { defaults.set(previousSnapshot, forKey: "workspaceSnapshot") }
+    let previousTheme = defaults.string(forKey: "terminalTheme")
+    defaults.set(TerminalTheme.oceanBlue.rawValue, forKey: "terminalTheme")
+    defer {
+        defaults.set(previousSnapshot, forKey: "workspaceSnapshot")
+        defaults.set(previousTheme, forKey: "terminalTheme")
+    }
 
     let app = TileApp()
     app.newWindow()
@@ -82,6 +87,20 @@ func runSmokeTest() -> Bool {
     }
     let pid = session.view.process.shellPid
     guard pid > 0 else { fputs("Shell did not start\n", stderr); return false }
+    let blue = session.view.nativeBackgroundColor.usingColorSpace(.deviceRGB)
+    guard let blue, blue.blueComponent > blue.redComponent + 0.1 else {
+        fputs("Blue terminal theme check failed\n", stderr)
+        return false
+    }
+    defaults.set(TerminalTheme.classicDark.rawValue, forKey: "terminalTheme")
+    session.applyTheme()
+    let dark = session.view.nativeBackgroundColor.usingColorSpace(.deviceRGB)
+    guard let dark, dark.blueComponent < 0.1 else {
+        fputs("Terminal theme switching check failed\n", stderr)
+        return false
+    }
+    defaults.set(TerminalTheme.oceanBlue.rawValue, forKey: "terminalTheme")
+    session.applyTheme()
     guard !session.hasRunningCommand else { fputs("Idle shell was marked busy\n", stderr); return false }
     app.newWindow()
     let destination = app.windows[1]

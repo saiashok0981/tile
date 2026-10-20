@@ -29,8 +29,15 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         view.processDelegate = self
         let size = UserDefaults.standard.object(forKey: "fontSize") as? Int ?? 13
         view.font = NSFont.monospacedSystemFont(ofSize: CGFloat(size), weight: .regular)
+        applyTheme()
         let shell = UserDefaults.standard.string(forKey: "shellPath") ?? ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         view.startProcess(executable: shell, execName: "-" + URL(fileURLWithPath: shell).lastPathComponent, currentDirectory: directory)
+    }
+
+    func applyTheme() {
+        let theme = TerminalTheme.current
+        view.nativeBackgroundColor = theme.background
+        view.nativeForegroundColor = theme.foreground
     }
 
     var hasRunningCommand: Bool {
