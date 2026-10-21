@@ -260,6 +260,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     private let brand = TileBrandView()
     private let tabs = NSStackView()
     private let toolbarSpacer = NSView()
+    private let toolbarTrailingSpacer = NSView()
     private let clockLabel = NSTextField(labelWithString: "")
     private var clockTimer: Timer?
     private let content = DropSurface(frame: .zero)
@@ -301,14 +302,20 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         toolbar.addArrangedSubview(brand)
         tabs.orientation = .horizontal
         tabs.spacing = 3
+        tabs.identifier = NSUserInterfaceItemIdentifier("tile.workspaceTabs")
         toolbar.addArrangedSubview(tabs)
         toolbarSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        toolbarSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         toolbar.addArrangedSubview(toolbarSpacer)
         clockLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-        clockLabel.alignment = .right
+        clockLabel.alignment = .center
         clockLabel.identifier = NSUserInterfaceItemIdentifier("tile.clock")
         clockLabel.setContentHuggingPriority(.required, for: .horizontal)
         toolbar.addArrangedSubview(clockLabel)
+        toolbarTrailingSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        toolbarTrailingSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        toolbar.addArrangedSubview(toolbarTrailingSpacer)
+        toolbarSpacer.widthAnchor.constraint(equalTo: toolbarTrailingSpacer.widthAnchor).isActive = true
         updateClock()
         clockTimer = Timer.scheduledTimer(timeInterval: 15, target: self, selector: #selector(updateClock), userInfo: nil, repeats: true)
         exitFullScreen.isHidden = true
