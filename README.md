@@ -24,6 +24,7 @@ The script builds `dist/Tile.app` and `dist/Tile-macOS-arm64.zip`. It uses an ad
 - Click the pencil in a pane header, or double-click the header, to give that terminal a name such as `dev`, `api`, or `codex`. An empty name restores the terminal-provided title. Names are restored after relaunch.
 - A green border marks a pane while a command is running. This includes AI agents and other foreground commands; it does not attempt to identify the type of command.
 - Click **Focus** or press `Command-Shift-F` to expand a pane. Escape restores the split layout.
+- Click the green window button or press `Control-Command-F` to fill the display while staying on the desktop. Transparent pane gaps show the wallpaper or windows behind Tile. Click **Exit Full Screen**, press `Control-Command-F`, or press Escape to restore the window.
 - Open **⚙** to change shortcuts, shell path, font size, the gap between panes, pane-title visibility, drag behavior, and terminal colors. Enable **Transparent gaps between terminals** to see through only the interior spaces between panes; the toolbar and outer margins stay solid. New terminals use the Ocean Blue theme by default; Classic Dark is also available.
 - The toolbar shows the current weekday, date, and time using your Mac’s local time zone.
 - `Command-Option-Space` brings the most recent Tile window forward from another app.
