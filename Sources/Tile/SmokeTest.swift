@@ -38,6 +38,10 @@ func runFourPaneLayoutTest() -> Bool {
         fputs("Four-pane check: toolbar control or logo is missing\n", stderr)
         return false
     }
+    guard (controller.window?.backgroundColor.alphaComponent ?? 1) <= 0.02 else {
+        fputs("Normal-sized window lost clear pane gaps\n", stderr)
+        return false
+    }
     controller.window?.setContentSize(NSSize(width: 1600, height: 900))
     RunLoop.current.run(until: Date().addingTimeInterval(0.1))
     root.layoutSubtreeIfNeeded()
@@ -85,7 +89,6 @@ func runFourPaneLayoutTest() -> Bool {
           interiorGaps.allSatisfy({ $0.minX >= paneFrames.map(\.minX).min()! && $0.maxX <= paneFrames.map(\.maxX).max()! }),
           interiorGaps.allSatisfy({ $0.minY >= paneFrames.map(\.minY).min()! && $0.maxY <= paneFrames.map(\.maxY).max()! }),
           controller.window?.isOpaque == false,
-          (controller.window?.backgroundColor.alphaComponent ?? 1) <= 0.02,
           gapSurfaces.allSatisfy({ ($0.layer?.backgroundColor?.alpha ?? 0) == 0 }),
           paneFrames[1].minX - paneFrames[0].maxX >= 14,
           paneFrames[0].minY - paneFrames[2].maxY >= 14,
@@ -95,6 +98,43 @@ func runFourPaneLayoutTest() -> Bool {
               ((i + 1)..<4).allSatisfy { j in frames[i].intersection(frames[j]).isEmpty }
           }) else {
         fputs("Four-pane check failed: \(terminals.count) views, frames \(frames)\n", stderr)
+        return false
+    }
+    controller.window?.setContentSize(NSSize(width: 1200, height: 760))
+    controller.window?.center()
+    guard let screen = controller.window?.screen, let normalFrame = controller.window?.frame else {
+        fputs("No screen for desktop full-screen check\n", stderr)
+        return false
+    }
+    let presentationOptions = NSApp.presentationOptions
+    let shellPIDs = controller.allSessions.map { $0.view.process.shellPid }
+    guard controller.window?.standardWindowButton(.zoomButton)?.action == #selector(TileWindow.toggleDesktopFullScreen) else {
+        fputs("Green window button is not connected to desktop full screen\n", stderr)
+        return false
+    }
+    controller.window?.toggleFullScreen(nil)
+    RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    let savedFrame = UserDefaults.standard.data(forKey: "workspaceSnapshot")
+        .flatMap { try? JSONDecoder().decode(WorkspaceSnapshot.self, from: $0) }?
+        .windows.first?.frame
+    guard controller.isDesktopFullScreen,
+          controller.window?.frame == screen.frame,
+          controller.window?.styleMask.contains(.fullScreen) == false,
+          controller.window?.styleMask.contains(.titled) == false,
+          (controller.window?.backgroundColor.alphaComponent ?? 1) <= 0.02,
+          NSApp.presentationOptions.contains([.autoHideMenuBar, .autoHideDock]),
+          savedFrame == NSStringFromRect(normalFrame),
+          controller.allSessions.map({ $0.view.process.shellPid }) == shellPIDs else {
+        fputs("Wallpaper-visible full-screen mode failed\n", stderr)
+        return false
+    }
+    controller.window?.toggleFullScreen(nil)
+    guard !controller.isDesktopFullScreen,
+          controller.window?.frame == normalFrame,
+          controller.window?.styleMask.contains(.titled) == true,
+          controller.window?.standardWindowButton(.zoomButton)?.action == #selector(TileWindow.toggleDesktopFullScreen),
+          NSApp.presentationOptions == presentationOptions else {
+        fputs("Leaving wallpaper-visible full-screen mode failed: active \(controller.isDesktopFullScreen), frame \(String(describing: controller.window?.frame)), original \(normalFrame), titled \(String(describing: controller.window?.styleMask.contains(.titled))), presentation \(NSApp.presentationOptions)\n", stderr)
         return false
     }
     app.showSettings()

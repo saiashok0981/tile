@@ -10,13 +10,18 @@ final class TileApp: NSObject, NSApplicationDelegate {
     private var settingsWindow: SettingsWindow?
     private let hotKey = GlobalHotKey()
     private var isTerminating = false
+    private var desktopFullScreenWindowIDs: Set<UUID> = []
+    private var previousPresentationOptions: NSApplication.PresentationOptions?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if !restoreWorkspace() { newWindow() }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             if self.settingsWindow?.window?.isKeyWindow == true { return event }
-            if event.keyCode == 53, self.activeWindow?.escapeFocus() == true { return nil }
+            if event.keyCode == 53 {
+                if self.activeWindow?.escapeFocus() == true { return nil }
+                if self.activeWindow?.escapeDesktopFullScreen() == true { return nil }
+            }
             if self.handleShortcut(event) { return nil }
             return event
         }
@@ -74,6 +79,19 @@ final class TileApp: NSObject, NSApplicationDelegate {
         windows.removeAll { $0 === window }
         if lastWindow === window { lastWindow = windows.last }
         if !isTerminating { saveWorkspace() }
+    }
+    func setDesktopFullScreen(_ active: Bool, for id: UUID) {
+        if active {
+            if desktopFullScreenWindowIDs.isEmpty { previousPresentationOptions = NSApp.presentationOptions }
+            desktopFullScreenWindowIDs.insert(id)
+            NSApp.presentationOptions = [.autoHideMenuBar, .autoHideDock]
+        } else {
+            desktopFullScreenWindowIDs.remove(id)
+            if desktopFullScreenWindowIDs.isEmpty, let previousPresentationOptions {
+                NSApp.presentationOptions = previousPresentationOptions
+                self.previousPresentationOptions = nil
+            }
+        }
     }
     func confirmClose(_ sessions: [TerminalSession]) -> Bool {
         guard sessions.contains(where: \.hasRunningCommand) else { return true }
@@ -159,11 +177,20 @@ final class TileApp: NSObject, NSApplicationDelegate {
         fileMenu.addItem(withTitle: "Focus Pane", action: #selector(menuFocus), keyEquivalent: "").target = self
         fileItem.submenu = fileMenu
         bar.addItem(fileItem)
+        let viewItem = NSMenuItem()
+        let viewMenu = NSMenu(title: "View")
+        let fullScreenItem = NSMenuItem(title: "Toggle Full Screen", action: #selector(menuToggleFullScreen), keyEquivalent: "f")
+        fullScreenItem.keyEquivalentModifierMask = [.command, .control]
+        fullScreenItem.target = self
+        viewMenu.addItem(fullScreenItem)
+        viewItem.submenu = viewMenu
+        bar.addItem(viewItem)
         NSApp.mainMenu = bar
     }
     @objc private func menuNewPane() { if let window = activeWindow { addPane(to: window) } else { newWindow() } }
     @objc private func menuNewWindow() { newWindow() }
     @objc private func menuFocus() { activeWindow?.toggleFocus() }
+    @objc private func menuToggleFullScreen() { activeWindow?.toggleDesktopFullScreen() }
 }
 
 let app = NSApplication.shared

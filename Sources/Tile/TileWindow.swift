@@ -1,6 +1,15 @@
 import AppKit
 
 @MainActor
+final class TileDesktopWindow: NSWindow {
+    var onToggleFullScreen: (() -> Void)?
+
+    override func toggleFullScreen(_ sender: Any?) {
+        onToggleFullScreen?()
+    }
+}
+
+@MainActor
 final class TileRootView: NSView {
     weak var contentSurface: NSView?
 
@@ -257,17 +266,25 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     private var paneViews: [PaneView] = []
     private let plus = NSButton(title: "+", target: nil, action: nil)
     private let focus = NSButton(title: "Focus", target: nil, action: nil)
+    private let exitFullScreen = NSButton(title: "Exit Full Screen", target: nil, action: nil)
     private let settings = NSButton(title: "⚙", target: nil, action: nil)
+    private var toolbarTopConstraint: NSLayoutConstraint?
+    private var normalFrame: NSRect?
+    private var normalStyleMask: NSWindow.StyleMask?
+    private var normalHasShadow = true
 
     init(id: UUID = UUID(), workspaces: [Workspace], owner: TileApp) {
         self.id = id
         self.workspaces = workspaces.isEmpty ? [Workspace()] : workspaces
         self.app = owner
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 720), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        let window = TileDesktopWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 720), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Tile"
         window.minSize = NSSize(width: 500, height: 320)
+        window.collectionBehavior = [.fullScreenNone, .fullScreenDisallowsTiling]
         super.init(window: window)
         window.delegate = self
+        window.onToggleFullScreen = { [weak self] in self?.toggleDesktopFullScreen() }
+        configureZoomButton()
         window.contentView = root
         root.wantsLayer = true
         toolbar.wantsLayer = true
@@ -294,7 +311,8 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         toolbar.addArrangedSubview(clockLabel)
         updateClock()
         clockTimer = Timer.scheduledTimer(timeInterval: 15, target: self, selector: #selector(updateClock), userInfo: nil, repeats: true)
-        for (button, action) in [(plus, #selector(addPane)), (focus, #selector(toggleFocus)), (settings, #selector(openSettings))] {
+        exitFullScreen.isHidden = true
+        for (button, action) in [(plus, #selector(addPane)), (focus, #selector(toggleFocus)), (exitFullScreen, #selector(toggleDesktopFullScreen)), (settings, #selector(openSettings))] {
             button.target = self
             button.action = action
             button.bezelStyle = .rounded
@@ -302,10 +320,12 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         }
         toolbar.translatesAutoresizingMaskIntoConstraints = false
         content.translatesAutoresizingMaskIntoConstraints = false
+        let topConstraint = toolbar.topAnchor.constraint(equalTo: root.topAnchor, constant: 8)
+        toolbarTopConstraint = topConstraint
         NSLayoutConstraint.activate([
             toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10),
             toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10),
-            toolbar.topAnchor.constraint(equalTo: root.topAnchor, constant: 8),
+            topConstraint,
             toolbar.heightAnchor.constraint(equalToConstant: 38),
             content.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 8),
             content.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -319,6 +339,12 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     var workspace: Workspace { workspaces[selectedWorkspace] }
     var allSessions: [TerminalSession] { workspaces.flatMap(\.panes) }
     var currentSession: TerminalSession? { workspace.panes.first { $0.id == selectedPane } ?? workspace.panes.first }
+    var isDesktopFullScreen: Bool { normalFrame != nil }
+    var frameForRestoration: NSRect? { normalFrame ?? window?.frame }
+    private func configureZoomButton() {
+        window?.standardWindowButton(.zoomButton)?.target = self
+        window?.standardWindowButton(.zoomButton)?.action = #selector(toggleDesktopFullScreen)
+    }
 
     func add(_ session: TerminalSession, before target: TerminalSession? = nil) {
         if workspace.panes.count == 4 {
@@ -403,13 +429,46 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     private func applyGapAppearance() {
         let transparent = PaneLayout.transparentGaps
         window?.isOpaque = !transparent
-        // A fully clear NSWindow background renders as a dark fallback on macOS;
-        // a tiny nonzero alpha keeps the desktop visible through the gap mask.
+        // A tiny nonzero alpha avoids AppKit's dark fallback while leaving gaps clear.
         window?.backgroundColor = transparent ? NSColor.windowBackgroundColor.withAlphaComponent(0.01) : .windowBackgroundColor
         root.layer?.backgroundColor = NSColor.clear.cgColor
         content.layer?.backgroundColor = (transparent ? NSColor.clear : NSColor.windowBackgroundColor).cgColor
         toolbar.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         root.needsDisplay = true
+    }
+    @objc func toggleDesktopFullScreen() {
+        guard let window else { return }
+        if let normalFrame, let normalStyleMask {
+            window.styleMask = normalStyleMask
+            window.hasShadow = normalHasShadow
+            toolbarTopConstraint?.constant = 8
+            exitFullScreen.isHidden = true
+            window.setFrame(normalFrame, display: true)
+            self.normalFrame = nil
+            self.normalStyleMask = nil
+            configureZoomButton()
+            app?.setDesktopFullScreen(false, for: id)
+        } else {
+            guard let screen = window.screen ?? NSScreen.main else { return }
+            normalFrame = window.frame
+            normalStyleMask = window.styleMask
+            normalHasShadow = window.hasShadow
+            window.styleMask = .borderless
+            window.hasShadow = false
+            toolbarTopConstraint?.constant = max(8, screen.safeAreaInsets.top + 8)
+            exitFullScreen.isHidden = false
+            window.setFrame(screen.frame, display: true)
+            app?.setDesktopFullScreen(true, for: id)
+        }
+        window.makeKeyAndOrderFront(nil)
+        root.needsLayout = true
+        root.needsDisplay = true
+        app?.saveWorkspace()
+    }
+    func escapeDesktopFullScreen() -> Bool {
+        guard isDesktopFullScreen else { return false }
+        toggleDesktopFullScreen()
+        return true
     }
     private func split(_ views: [NSView], vertical: Bool, ratio: CGFloat, onChange: @escaping (CGFloat) -> Void) -> NSView {
         guard views.count > 1 else { return views[0] }
@@ -510,6 +569,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         return true
     }
     func windowWillClose(_ notification: Notification) {
+        if isDesktopFullScreen { app?.setDesktopFullScreen(false, for: id) }
         clockTimer?.invalidate()
         clockTimer = nil
         app?.removeWindow(self)

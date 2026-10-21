@@ -22,7 +22,7 @@ struct WorkspaceSnapshot: Codable {
 extension TileApp {
     func saveWorkspace() {
         let snapshot = WorkspaceSnapshot(windows: windows.compactMap { controller in
-            guard let frame = controller.window?.frame else { return nil }
+            guard let frame = controller.frameForRestoration else { return nil }
             let groups = controller.workspaces.map { workspace in
                 WorkspaceSnapshot.Group(id: workspace.id, panes: workspace.panes.map { session in
                     session.refreshDirectory()
