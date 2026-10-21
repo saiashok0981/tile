@@ -3,9 +3,15 @@ import AppKit
 @MainActor
 final class TileDesktopWindow: NSWindow {
     var onToggleFullScreen: (() -> Void)?
+    var onFirstResponderChange: (() -> Void)?
 
     override func toggleFullScreen(_ sender: Any?) {
         onToggleFullScreen?()
+    }
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        let accepted = super.makeFirstResponder(responder)
+        if accepted { onFirstResponderChange?() }
+        return accepted
     }
 }
 
@@ -163,6 +169,7 @@ final class PaneView: NSView {
     let session: TerminalSession
     let header: PaneHeader
     private let title = NSTextField(labelWithString: "")
+    private let inputFocusIndicator = NSTextField(labelWithString: "▸")
     private let renameButton = NSButton(title: "✎", target: nil, action: nil)
     private let close = NSButton(title: "×", target: nil, action: nil)
     private var activityTimer: Timer?
@@ -178,6 +185,10 @@ final class PaneView: NSView {
         title.stringValue = session.displayTitle
         title.textColor = TerminalTheme.current.foreground
         title.lineBreakMode = .byTruncatingTail
+        inputFocusIndicator.identifier = NSUserInterfaceItemIdentifier("tile.inputFocusIndicator")
+        inputFocusIndicator.textColor = .systemBlue
+        inputFocusIndicator.font = NSFont.systemFont(ofSize: 14, weight: .bold)
+        inputFocusIndicator.isHidden = true
         close.bezelStyle = .inline
         close.contentTintColor = TerminalTheme.current.foreground
         renameButton.bezelStyle = .inline
@@ -189,6 +200,7 @@ final class PaneView: NSView {
         close.action = #selector(closePane)
         addSubview(header)
         header.onRename = { [weak self] in self?.onRename?() }
+        header.addSubview(inputFocusIndicator)
         header.addSubview(title)
         header.addSubview(renameButton)
         header.addSubview(close)
@@ -207,7 +219,8 @@ final class PaneView: NSView {
         let headerHeight: CGFloat = 28
         header.frame = NSRect(x: 0, y: bounds.height - headerHeight, width: bounds.width, height: headerHeight)
         title.isHidden = UserDefaults.standard.object(forKey: "showPaneTitles") as? Bool == false
-        title.frame = NSRect(x: 8, y: 4, width: max(0, bounds.width - 78), height: 20)
+        inputFocusIndicator.frame = NSRect(x: 6, y: 4, width: 12, height: 20)
+        title.frame = NSRect(x: 20, y: 4, width: max(0, bounds.width - 90), height: 20)
         renameButton.frame = NSRect(x: max(0, bounds.width - 60), y: 3, width: 26, height: 22)
         close.frame = NSRect(x: max(0, bounds.width - 30), y: 3, width: 26, height: 22)
         session.view.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - headerHeight))
@@ -219,6 +232,13 @@ final class PaneView: NSView {
     func applyCornerRadius(_ radius: CGFloat) {
         layer?.cornerRadius = radius
         layer?.masksToBounds = radius > 0
+    }
+    func showInputFocus(_ active: Bool) {
+        inputFocusIndicator.isHidden = !active
+        header.layer?.backgroundColor = (active
+            ? TerminalTheme.current.header.blended(withFraction: 0.2, of: .systemBlue) ?? TerminalTheme.current.header
+            : TerminalTheme.current.header).cgColor
+        title.textColor = TerminalTheme.current.foreground.withAlphaComponent(active ? 1 : 0.8)
     }
     func updateActivity() {
         let running = session.hasRunningCommand
@@ -260,6 +280,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     private let brand = TileBrandView()
     private let tabs = NSStackView()
     private let toolbarSpacer = NSView()
+    private let toolbarTrailingSpacer = NSView()
     private let clockLabel = NSTextField(labelWithString: "")
     private var clockTimer: Timer?
     private let content = DropSurface(frame: .zero)
@@ -284,6 +305,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         window.delegate = self
         window.onToggleFullScreen = { [weak self] in self?.toggleDesktopFullScreen() }
+        window.onFirstResponderChange = { [weak self] in self?.updateInputFocusCue() }
         configureZoomButton()
         window.contentView = root
         root.wantsLayer = true
@@ -301,14 +323,20 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         toolbar.addArrangedSubview(brand)
         tabs.orientation = .horizontal
         tabs.spacing = 3
+        tabs.identifier = NSUserInterfaceItemIdentifier("tile.workspaceTabs")
         toolbar.addArrangedSubview(tabs)
         toolbarSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        toolbarSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         toolbar.addArrangedSubview(toolbarSpacer)
         clockLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-        clockLabel.alignment = .right
+        clockLabel.alignment = .center
         clockLabel.identifier = NSUserInterfaceItemIdentifier("tile.clock")
         clockLabel.setContentHuggingPriority(.required, for: .horizontal)
         toolbar.addArrangedSubview(clockLabel)
+        toolbarTrailingSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        toolbarTrailingSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        toolbar.addArrangedSubview(toolbarTrailingSpacer)
+        toolbarSpacer.widthAnchor.constraint(equalTo: toolbarTrailingSpacer.widthAnchor).isActive = true
         updateClock()
         clockTimer = Timer.scheduledTimer(timeInterval: 15, target: self, selector: #selector(updateClock), userInfo: nil, repeats: true)
         exitFullScreen.isHidden = true
@@ -334,6 +362,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         ])
         render()
         showWindow(nil)
+        focusTerminal(currentSession)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
     var workspace: Workspace { workspaces[selectedWorkspace] }
@@ -341,6 +370,10 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     var currentSession: TerminalSession? { workspace.panes.first { $0.id == selectedPane } ?? workspace.panes.first }
     var isDesktopFullScreen: Bool { normalFrame != nil }
     var frameForRestoration: NSRect? { normalFrame ?? window?.frame }
+    func focusTerminal(_ session: TerminalSession?) {
+        guard let session else { return }
+        _ = window?.makeFirstResponder(session.view)
+    }
     private func configureZoomButton() {
         window?.standardWindowButton(.zoomButton)?.target = self
         window?.standardWindowButton(.zoomButton)?.action = #selector(toggleDesktopFullScreen)
@@ -356,7 +389,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         selectedPane = session.id
         focused = false
         render()
-        window?.makeFirstResponder(session.view)
+        focusTerminal(session)
     }
     func remove(_ session: TerminalSession, terminate: Bool = false) {
         for workspace in workspaces { workspace.panes.removeAll { $0.id == session.id } }
@@ -367,6 +400,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         selectedPane = workspace.panes.first?.id
         focused = false
         render()
+        focusTerminal(currentSession)
     }
     func render() {
         guard window != nil else { return }
@@ -425,6 +459,12 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
             body.topAnchor.constraint(equalTo: content.topAnchor), body.bottomAnchor.constraint(equalTo: content.bottomAnchor)
         ])
         window?.title = "Tile — Workspace \(selectedWorkspace + 1)"
+        updateInputFocusCue()
+    }
+    private func updateInputFocusCue() {
+        let responder = window?.isKeyWindow == true ? window?.firstResponder : nil
+        if let session = workspace.panes.first(where: { $0.view === responder }) { selectedPane = session.id }
+        paneViews.forEach { $0.showInputFocus(responder === $0.session.view) }
     }
     private func applyGapAppearance() {
         let transparent = PaneLayout.transparentGaps
@@ -510,6 +550,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         selectedPane = workspace.panes.first?.id
         focused = false
         render()
+        focusTerminal(currentSession)
         app?.saveWorkspace()
     }
     func escapeFocus() -> Bool {
@@ -537,7 +578,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         guard next < workspace.panes.count else { return }
         if swap { workspace.panes.swapAt(current, next); render() }
         selectedPane = workspace.panes[next].id
-        window?.makeFirstResponder(workspace.panes[next].view)
+        focusTerminal(workspace.panes[next])
     }
     func movePaneToNextWorkspace() {
         guard let session = currentSession else { return }
@@ -550,6 +591,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         else { selectedWorkspace = next }
         selectedPane = session.id
         render()
+        focusTerminal(session)
         app?.saveWorkspace()
     }
     @objc private func addPane() { app?.addPane(to: self) }
@@ -561,7 +603,11 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     @objc private func openSettings() { app?.showSettings() }
     @objc private func updateClock() { clockLabel.stringValue = TileClock.label(for: Date()) }
     @objc private func selectTab(_ sender: NSButton) { selectWorkspace(sender.tag) }
-    func windowDidBecomeKey(_ notification: Notification) { app?.lastWindow = self }
+    func windowDidBecomeKey(_ notification: Notification) {
+        app?.lastWindow = self
+        updateInputFocusCue()
+    }
+    func windowDidResignKey(_ notification: Notification) { updateInputFocusCue() }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard allowClose || app?.confirmClose(allSessions) == true else { return false }
         allSessions.forEach { $0.view.terminate() }

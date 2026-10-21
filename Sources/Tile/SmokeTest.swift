@@ -6,6 +6,73 @@ func viewDescendants(_ view: NSView) -> [NSView] {
 }
 
 @MainActor
+func runInputFocusTest() -> Bool {
+    let defaults = UserDefaults.standard
+    let previousSnapshot = defaults.data(forKey: "workspaceSnapshot")
+    defer { defaults.set(previousSnapshot, forKey: "workspaceSnapshot") }
+    let app = TileApp()
+    app.newWindow()
+    let controller = app.windows[0]
+    defer {
+        controller.allowClose = true
+        controller.allSessions.forEach { $0.view.terminate() }
+        controller.window?.close()
+    }
+    var passed = false
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        NSApp.activate(ignoringOtherApps: true)
+        controller.window?.makeKeyAndOrderFront(nil)
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        guard let root = controller.window?.contentView,
+              let first = controller.currentSession else { NSApp.stop(nil); return }
+        @MainActor func hasFocusCue(_ session: TerminalSession) -> Bool {
+            guard let pane = viewDescendants(root).compactMap({ $0 as? PaneView }).first(where: { $0.session === session }) else { return false }
+            return viewDescendants(pane).contains { $0.identifier?.rawValue == "tile.inputFocusIndicator" && !$0.isHidden }
+        }
+        guard controller.window?.isKeyWindow == true,
+              controller.window?.firstResponder === first.view,
+              hasFocusCue(first) else {
+            fputs("Initial terminal input focus is not visible\n", stderr)
+            NSApp.stop(nil)
+            return
+        }
+        app.addPane(to: controller)
+        guard let second = controller.currentSession,
+              controller.window?.firstResponder === second.view,
+              hasFocusCue(second), !hasFocusCue(first) else {
+            fputs("New terminal input focus cue did not follow input\n", stderr)
+            NSApp.stop(nil)
+            return
+        }
+        _ = controller.window?.makeFirstResponder(first.view)
+        guard hasFocusCue(first), !hasFocusCue(second) else {
+            fputs("Terminal input focus cue did not follow responder change\n", stderr)
+            NSApp.stop(nil)
+            return
+        }
+        _ = controller.window?.makeFirstResponder(nil)
+        guard !hasFocusCue(first), !hasFocusCue(second) else {
+            fputs("Terminal input focus cue stayed active outside terminal input\n", stderr)
+            NSApp.stop(nil)
+            return
+        }
+        _ = controller.window?.makeFirstResponder(second.view)
+        controller.close(second)
+        guard controller.window?.firstResponder === first.view, hasFocusCue(first) else {
+            fputs("Closing the active terminal did not focus the remaining terminal\n", stderr)
+            NSApp.stop(nil)
+            return
+        }
+        passed = true
+        NSApp.stop(nil)
+    }
+    NSApp.run()
+    if passed { print("Input focus check passed") }
+    return passed
+}
+
+@MainActor
 func runFourPaneLayoutTest() -> Bool {
     _ = NSApplication.shared
     let defaults = UserDefaults.standard
@@ -34,6 +101,7 @@ func runFourPaneLayoutTest() -> Bool {
           let plus = viewDescendants(root).compactMap({ $0 as? NSButton }).first(where: { $0.title == "+" }),
           let settings = viewDescendants(root).compactMap({ $0 as? NSButton }).first(where: { $0.title == "⚙" }),
           let brand = viewDescendants(root).compactMap({ $0 as? TileBrandView }).first(where: { $0.identifier?.rawValue == "tile.brand" }),
+          let tabs = viewDescendants(root).compactMap({ $0 as? NSStackView }).first(where: { $0.identifier?.rawValue == "tile.workspaceTabs" }),
           let clock = viewDescendants(root).compactMap({ $0 as? NSTextField }).first(where: { $0.identifier?.rawValue == "tile.clock" }) else {
         fputs("Four-pane check: toolbar control or logo is missing\n", stderr)
         return false
@@ -47,12 +115,17 @@ func runFourPaneLayoutTest() -> Bool {
     root.layoutSubtreeIfNeeded()
     let settingsFrame = settings.convert(settings.bounds, to: root)
     let brandFrame = brand.convert(brand.bounds, to: root)
+    let tabsFrame = tabs.convert(tabs.bounds, to: root)
+    let plusFrame = plus.convert(plus.bounds, to: root)
+    let clockFrame = clock.convert(clock.bounds, to: root)
+    let freeSpaceCenter = (tabsFrame.maxX + plusFrame.minX) / 2
     guard settingsFrame.maxX >= root.bounds.maxX - 20,
           brandFrame.width >= 70,
           brandFrame.minX >= 0,
+          abs(clockFrame.midX - freeSpaceCenter) < 2,
           TileBrand.image.size.width > 0,
           [TileClock.label(for: Date()), TileClock.label(for: Date().addingTimeInterval(-60))].contains(clock.stringValue) else {
-        fputs("Wide-window toolbar alignment failed: settings at \(settingsFrame.maxX), edge \(root.bounds.maxX)\n", stderr)
+        fputs("Wide-window toolbar alignment failed: settings at \(settingsFrame.maxX), edge \(root.bounds.maxX), clock center \(clockFrame.midX), free-space center \(freeSpaceCenter)\n", stderr)
         return false
     }
     plus.performClick(nil)

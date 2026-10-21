@@ -53,6 +53,7 @@ final class TileApp: NSObject, NSApplicationDelegate {
         guard let window = window(containing: session) else { return }
         window.selectedPane = session.id
         window.window?.makeKeyAndOrderFront(nil)
+        window.focusTerminal(session)
     }
     func detach(_ session: TerminalSession, from source: TileWindow, at point: NSPoint) {
         source.remove(session)
@@ -200,6 +201,8 @@ if CommandLine.arguments.contains("--smoke-test") {
     exit(runSmokeTest() ? 0 : 1)
 } else if CommandLine.arguments.contains("--layout-test") {
     exit(runFourPaneLayoutTest() ? 0 : 1)
+} else if CommandLine.arguments.contains("--focus-test") {
+    exit(runInputFocusTest() ? 0 : 1)
 } else {
     let delegate = TileApp()
     app.delegate = delegate
