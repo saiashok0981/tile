@@ -198,6 +198,7 @@ final class PaneView: NSView {
         renameButton.toolTip = "Rename terminal"
         close.target = self
         close.action = #selector(closePane)
+        close.toolTip = "Close terminal"
         addSubview(header)
         header.onRename = { [weak self] in self?.onRename?() }
         header.addSubview(inputFocusIndicator)
@@ -340,6 +341,9 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         updateClock()
         clockTimer = Timer.scheduledTimer(timeInterval: 15, target: self, selector: #selector(updateClock), userInfo: nil, repeats: true)
         exitFullScreen.isHidden = true
+        plus.toolTip = "New terminal"
+        focus.toolTip = "Focus selected terminal pane"
+        settings.toolTip = "Settings"
         for (button, action) in [(plus, #selector(addPane)), (focus, #selector(toggleFocus)), (exitFullScreen, #selector(toggleDesktopFullScreen)), (settings, #selector(openSettings))] {
             button.target = self
             button.action = action
@@ -407,10 +411,15 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         applyGapAppearance()
         tabs.arrangedSubviews.forEach { tabs.removeArrangedSubview($0); $0.removeFromSuperview() }
         for index in workspaces.indices {
-            let button = NSButton(title: "\(index + 1)", target: self, action: #selector(selectTab(_:)))
+            let active = index == selectedWorkspace
+            let button = NSButton(title: active ? "▸ \(index + 1)" : "\(index + 1)", target: self, action: #selector(selectTab(_:)))
             button.tag = index
             button.bezelStyle = .rounded
-            button.state = index == selectedWorkspace ? .on : .off
+            button.setButtonType(.toggle)
+            button.state = active ? .on : .off
+            let description = active ? "Workspace \(index + 1), active" : "Switch to workspace \(index + 1)"
+            button.toolTip = description
+            button.setAccessibilityLabel(description)
             tabs.addArrangedSubview(button)
         }
         content.subviews.forEach { $0.removeFromSuperview() }

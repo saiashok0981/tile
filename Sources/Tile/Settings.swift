@@ -40,7 +40,8 @@ enum TerminalTheme: String, CaseIterable {
 }
 
 enum TileAction: String, CaseIterable {
-    case newPane, focusPane, nextWorkspace, previousWorkspace
+    case newPane, focusPane, focusSelectedTerminal, renamePane, closePane
+    case nextWorkspace, previousWorkspace
     case focusLeft, focusRight, focusUp, focusDown
     case swapLeft, swapRight, swapUp, swapDown
     case moveToNextWorkspace, raiseWindow
@@ -51,6 +52,9 @@ enum TileAction: String, CaseIterable {
         switch self {
         case .newPane: "New terminal"
         case .focusPane: "Focus pane"
+        case .focusSelectedTerminal: "Focus selected terminal"
+        case .renamePane: "Rename selected terminal"
+        case .closePane: "Close selected terminal"
         case .nextWorkspace: "Next workspace"
         case .previousWorkspace: "Previous workspace"
         case .focusLeft: "Focus left"
@@ -78,22 +82,25 @@ enum TileAction: String, CaseIterable {
         switch self {
         case .newPane: "cmd+n"
         case .focusPane: "cmd+shift+f"
+        case .focusSelectedTerminal: "cmd+shift+return"
+        case .renamePane: "cmd+shift+r"
+        case .closePane: "cmd+shift+w"
         case .nextWorkspace: "cmd+option+right"
         case .previousWorkspace: "cmd+option+left"
-        case .focusLeft: "cmd+ctrl+left"
-        case .focusRight: "cmd+ctrl+right"
-        case .focusUp: "cmd+ctrl+up"
-        case .focusDown: "cmd+ctrl+down"
+        case .focusLeft: "option+left"
+        case .focusRight: "option+right"
+        case .focusUp: "option+up"
+        case .focusDown: "option+down"
         case .swapLeft: "cmd+ctrl+shift+left"
         case .swapRight: "cmd+ctrl+shift+right"
         case .swapUp: "cmd+ctrl+shift+up"
         case .swapDown: "cmd+ctrl+shift+down"
         case .moveToNextWorkspace: "cmd+ctrl+shift+return"
         case .raiseWindow: "cmd+option+space"
-        case .workspace1: "cmd+option+1"
-        case .workspace2: "cmd+option+2"
-        case .workspace3: "cmd+option+3"
-        case .workspace4: "cmd+option+4"
+        case .workspace1: "cmd+1"
+        case .workspace2: "cmd+2"
+        case .workspace3: "cmd+3"
+        case .workspace4: "cmd+4"
         case .workspace5: "cmd+option+5"
         case .workspace6: "cmd+option+6"
         case .workspace7: "cmd+option+7"
@@ -101,7 +108,23 @@ enum TileAction: String, CaseIterable {
         case .workspace9: "cmd+option+9"
         }
     }
-    var shortcut: String { UserDefaults.standard.string(forKey: "shortcut.\(rawValue)") ?? defaultShortcut }
+    private var previousDefaultShortcut: String? {
+        switch self {
+        case .focusLeft: "cmd+ctrl+left"
+        case .focusRight: "cmd+ctrl+right"
+        case .focusUp: "cmd+ctrl+up"
+        case .focusDown: "cmd+ctrl+down"
+        case .workspace1: "cmd+option+1"
+        case .workspace2: "cmd+option+2"
+        case .workspace3: "cmd+option+3"
+        case .workspace4: "cmd+option+4"
+        default: nil
+        }
+    }
+    var shortcut: String {
+        guard let saved = UserDefaults.standard.string(forKey: "shortcut.\(rawValue)") else { return defaultShortcut }
+        return saved == previousDefaultShortcut ? defaultShortcut : saved
+    }
 }
 
 enum Shortcuts {
@@ -162,9 +185,9 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate {
         root.hasVerticalScroller = true
         root.autoresizingMask = [.width, .height]
         window.contentView = root
-        let form = NSView(frame: NSRect(x: 0, y: 0, width: 510, height: 1100))
+        let form = NSView(frame: NSRect(x: 0, y: 0, width: 510, height: 1200))
         root.documentView = form
-        var y: CGFloat = 1062
+        var y: CGFloat = 1162
         func label(_ text: String, at x: CGFloat = 20, width: CGFloat = 240) {
             let view = NSTextField(labelWithString: text)
             view.frame = NSRect(x: x, y: y, width: width, height: 22)

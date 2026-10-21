@@ -6,6 +6,146 @@ func viewDescendants(_ view: NSView) -> [NSView] {
 }
 
 @MainActor
+func runKeyboardWorkflowTest() -> Bool {
+    let defaults = UserDefaults.standard
+    let previousSnapshot = defaults.data(forKey: "workspaceSnapshot")
+    let actions: [TileAction] = [.focusLeft, .focusRight, .focusUp, .focusDown,
+                                 .workspace1, .workspace2, .focusSelectedTerminal,
+                                 .renamePane, .closePane]
+    let savedShortcuts = Dictionary(uniqueKeysWithValues: actions.map { ($0, defaults.object(forKey: "shortcut.\($0.rawValue)")) })
+    defaults.removeObject(forKey: "workspaceSnapshot")
+    for action in actions { defaults.removeObject(forKey: "shortcut.\(action.rawValue)") }
+    defer {
+        defaults.set(previousSnapshot, forKey: "workspaceSnapshot")
+        for (action, value) in savedShortcuts { defaults.set(value, forKey: "shortcut.\(action.rawValue)") }
+    }
+    let app = TileApp()
+    NSApp.delegate = app
+    var passed = false
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        guard let controller = app.windows.first, let tileWindow = controller.window,
+              tileWindow.isKeyWindow else {
+            fputs("Keyboard check has no active Tile window\n", stderr)
+            NSApp.stop(nil)
+            return
+        }
+        @MainActor func sendKey(_ code: UInt16, _ characters: String, _ flags: NSEvent.ModifierFlags) {
+            guard let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+                                               timestamp: 0, windowNumber: tileWindow.windowNumber,
+                                               context: nil, characters: characters,
+                                               charactersIgnoringModifiers: characters,
+                                               isARepeat: false, keyCode: code) else { return }
+            NSApp.sendEvent(event)
+        }
+        for _ in 0..<3 { app.addPane(to: controller) }
+        controller.focusTerminal(controller.workspace.panes[0])
+        sendKey(124, "", .option)
+        guard controller.selectedPane == controller.workspace.panes[1].id else {
+            fputs("Option-Right did not focus the adjacent terminal\n", stderr)
+            NSApp.stop(nil)
+            return
+        }
+        sendKey(125, "", .option)
+        guard controller.selectedPane == controller.workspace.panes[3].id else {
+            fputs("Option-Down did not focus the adjacent terminal\n", stderr)
+            NSApp.stop(nil)
+            return
+        }
+        sendKey(124, "", .option)
+        guard controller.selectedPane == controller.workspace.panes[3].id else {
+            fputs("Navigation past a pane edge changed focus\n", stderr)
+            NSApp.stop(nil)
+            return
+        }
+        app.addPane(to: controller)
+        sendKey(18, "1", .command)
+        guard controller.selectedWorkspace == 0, tileWindow.firstResponder === controller.currentSession?.view else {
+            fputs("Command-1 did not switch workspace and focus its terminal\n", stderr)
+            NSApp.stop(nil)
+            return
+        }
+        sendKey(19, "2", .command)
+        guard controller.selectedWorkspace == 1 else {
+            fputs("Command-2 did not switch workspace\n", stderr)
+            NSApp.stop(nil)
+            return
+        }
+        _ = tileWindow.makeFirstResponder(nil)
+        sendKey(36, "\r", [.command, .shift])
+        guard tileWindow.firstResponder === controller.currentSession?.view else {
+            fputs("Focus selected terminal shortcut did not restore input\n", stderr)
+            NSApp.stop(nil)
+            return
+        }
+        sendKey(18, "1", .command)
+        let count = controller.workspace.panes.count
+        sendKey(13, "w", [.command, .shift])
+        guard controller.workspace.panes.count == count - 1 else {
+            fputs("Close selected terminal shortcut did not close the pane\n", stderr)
+            NSApp.stop(nil)
+            return
+        }
+        guard let renamed = controller.currentSession else { NSApp.stop(nil); return }
+        let saveRename = Timer(timeInterval: 0.1, repeats: false) { _ in
+            MainActor.assumeIsolated {
+                guard let modal = NSApp.modalWindow,
+                      let root = modal.contentView else {
+                    fputs("Rename dialog is not modal\n", stderr)
+                    NSApp.stopModal(withCode: .cancel)
+                    return
+                }
+                let descendants = viewDescendants(root)
+                guard let field = descendants.compactMap({ $0 as? NSTextField }).first(where: { $0.isEditable }),
+                      let save = descendants.compactMap({ $0 as? NSButton }).first(where: { $0.title == "Save" }) else {
+                    fputs("Rename dialog controls are missing\n", stderr)
+                    NSApp.stopModal(withCode: .cancel)
+                    return
+                }
+                field.stringValue = "Renamed by keyboard"
+                save.performClick(nil)
+            }
+        }
+        RunLoop.main.add(saveRename, forMode: RunLoop.Mode("NSModalPanelRunLoopMode"))
+        sendKey(15, "r", [.command, .shift])
+        guard renamed.customTitle == "Renamed by keyboard" else {
+            fputs("Rename selected terminal shortcut did not rename the pane\n", stderr)
+            NSApp.stop(nil)
+            return
+        }
+        controller.selectWorkspace(1)
+        app.newWindow()
+        guard let other = app.windows.last, other !== controller,
+              let otherWindow = other.window, otherWindow.isKeyWindow else {
+            fputs("Second Tile window did not become active\n", stderr)
+            NSApp.stop(nil)
+            return
+        }
+        for _ in 0..<4 { app.addPane(to: other) }
+        guard other.selectedWorkspace == 1 else { NSApp.stop(nil); return }
+        guard let switchFirst = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                                                  timestamp: 0, windowNumber: otherWindow.windowNumber,
+                                                  context: nil, characters: "1", charactersIgnoringModifiers: "1",
+                                                  isARepeat: false, keyCode: 18) else { NSApp.stop(nil); return }
+        NSApp.sendEvent(switchFirst)
+        guard other.selectedWorkspace == 0, controller.selectedWorkspace == 1 else {
+            fputs("Switching workspaces changed another Tile window\n", stderr)
+            NSApp.stop(nil)
+            return
+        }
+        passed = true
+        NSApp.stop(nil)
+    }
+    NSApp.run()
+    for window in Array(app.windows) {
+        window.allowClose = true
+        window.allSessions.forEach { $0.view.terminate() }
+        window.window?.close()
+    }
+    if passed { print("Keyboard workflow check passed") }
+    return passed
+}
+
+@MainActor
 func runInputFocusTest() -> Bool {
     let defaults = UserDefaults.standard
     let previousSnapshot = defaults.data(forKey: "workspaceSnapshot")
@@ -251,10 +391,22 @@ func runSmokeTest() -> Bool {
     let defaults = UserDefaults.standard
     let previousSnapshot = defaults.data(forKey: "workspaceSnapshot")
     let previousTheme = defaults.string(forKey: "terminalTheme")
+    let previousFocusLeft = defaults.object(forKey: "shortcut.focusLeft")
     defaults.set(TerminalTheme.oceanBlue.rawValue, forKey: "terminalTheme")
     defer {
         defaults.set(previousSnapshot, forKey: "workspaceSnapshot")
         defaults.set(previousTheme, forKey: "terminalTheme")
+        defaults.set(previousFocusLeft, forKey: "shortcut.focusLeft")
+    }
+    defaults.set("cmd+ctrl+left", forKey: "shortcut.focusLeft")
+    guard TileAction.focusLeft.shortcut == "option+left" else {
+        fputs("Previously saved default pane navigation was not updated\n", stderr)
+        return false
+    }
+    defaults.set("ctrl+option+left", forKey: "shortcut.focusLeft")
+    guard TileAction.focusLeft.shortcut == "ctrl+option+left" else {
+        fputs("Custom pane navigation was changed unexpectedly\n", stderr)
+        return false
     }
 
     let app = TileApp()
@@ -268,6 +420,29 @@ func runSmokeTest() -> Bool {
         }
     }
     for _ in 0..<4 { app.addPane(to: source) }
+    guard TileAction.focusLeft.defaultShortcut == "option+left",
+          TileAction.focusRight.defaultShortcut == "option+right",
+          TileAction.workspace1.defaultShortcut == "cmd+1",
+          TileAction.workspace4.defaultShortcut == "cmd+4" else {
+        fputs("Expected pane and workspace keyboard defaults are missing\n", stderr)
+        return false
+    }
+    func workspaceButtonTitles() -> [String] {
+        guard let root = source.window?.contentView,
+              let tabs = viewDescendants(root).compactMap({ $0 as? NSStackView }).first(where: { $0.identifier?.rawValue == "tile.workspaceTabs" }) else { return [] }
+        return tabs.arrangedSubviews.compactMap { ($0 as? NSButton)?.title }
+    }
+    guard workspaceButtonTitles() == ["1", "▸ 2"] else {
+        fputs("Active workspace is not clear in the switcher\n", stderr)
+        return false
+    }
+    source.selectWorkspace(0)
+    guard workspaceButtonTitles() == ["▸ 1", "2"],
+          source.window?.firstResponder === source.currentSession?.view else {
+        fputs("Workspace switcher did not update or focus the selected workspace\n", stderr)
+        return false
+    }
+    source.selectWorkspace(1)
     guard source.workspaces.count == 2,
           source.workspaces[0].panes.count == 4,
           source.workspaces[1].panes.count == 1,

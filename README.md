@@ -19,9 +19,11 @@ The script builds `dist/Tile.app` and `dist/Tile-macOS-arm64.zip`. It uses an ad
 ## Use
 
 - Click **+** or press `Command-N` to add a terminal. The fifth pane starts another numbered workspace.
-- Click a workspace number, or use `Command-Option-Left/Right` to switch. `Command-Option-1` through `9` selects a numbered workspace.
+- The active workspace has a `▸` marker. Click a workspace number, or use `Command-Option-Left/Right` to switch. `Command-1` through `4` selects workspaces 1–4; `Command-Option-5` through `9` selects workspaces 5–9.
+- Use `Option-Arrow` to focus an adjacent terminal. At an edge, focus stays in the current pane. These defaults take over `Option-Left/Right` word movement inside terminals; change them in Settings if you prefer word movement.
 - Drag a pane by its header to rearrange it, move it into another Tile window, or make a new window on another monitor.
-- Click the pencil in a pane header, or double-click the header, to give that terminal a name such as `dev`, `api`, or `codex`. An empty name restores the terminal-provided title. Names are restored after relaunch.
+- Click the pencil in a pane header, double-click the header, or press `Command-Shift-R` to name the selected terminal. An empty name restores the terminal-provided title. Names are restored after relaunch.
+- Press `Command-Shift-Return` to return input to the selected terminal, or `Command-Shift-W` to close it. A running command still requires confirmation. Open **Help → Keyboard Shortcuts** for the current bindings.
 - A green border marks a pane while a command is running. This includes AI agents and other foreground commands; it does not attempt to identify the type of command.
 - Click **Focus** or press `Command-Shift-F` to expand a pane. Escape restores the split layout.
 - Click the green window button or press `Control-Command-F` to fill the display while staying on the desktop. Transparent pane gaps show the wallpaper or windows behind Tile. Click **Exit Full Screen**, press `Control-Command-F`, or press Escape to restore the window.

@@ -135,11 +135,20 @@ final class TileApp: NSObject, NSApplicationDelegate {
         (lastWindow ?? windows.first)?.window?.makeKeyAndOrderFront(nil)
     }
     private func handleShortcut(_ event: NSEvent) -> Bool {
-        guard let shortcut = Shortcuts.from(event), let window = activeWindow else { return false }
+        guard NSApp.modalWindow == nil,
+              let keyWindow = NSApp.keyWindow,
+              let window = windows.first(where: { $0.window === keyWindow }),
+              let shortcut = Shortcuts.from(event) else { return false }
         guard let action = TileAction.allCases.first(where: { $0.shortcut == shortcut }) else { return false }
+        let directionalActions: Set<TileAction> = [.focusLeft, .focusRight, .focusUp, .focusDown,
+                                                    .swapLeft, .swapRight, .swapUp, .swapDown]
+        if directionalActions.contains(action) && !(keyWindow.firstResponder is SelectableTerminalView) { return false }
         switch action {
         case .newPane: addPane(to: window)
         case .focusPane: window.toggleFocus()
+        case .focusSelectedTerminal: window.focusTerminal(window.currentSession)
+        case .renamePane: if let session = window.currentSession { window.rename(session) }
+        case .closePane: if let session = window.currentSession { window.close(session) }
         case .nextWorkspace: window.selectWorkspace(window.selectedWorkspace + 1)
         case .previousWorkspace: window.selectWorkspace(window.selectedWorkspace - 1)
         case .focusLeft: window.navigate(dx: -1, dy: 0, swap: false)
@@ -175,6 +184,9 @@ final class TileApp: NSObject, NSApplicationDelegate {
         let fileMenu = NSMenu(title: "File")
         fileMenu.addItem(withTitle: "New Terminal", action: #selector(menuNewPane), keyEquivalent: "").target = self
         fileMenu.addItem(withTitle: "New Window", action: #selector(menuNewWindow), keyEquivalent: "").target = self
+        fileMenu.addItem(withTitle: "Focus Selected Terminal", action: #selector(menuFocusSelectedTerminal), keyEquivalent: "").target = self
+        fileMenu.addItem(withTitle: "Rename Selected Terminal", action: #selector(menuRenamePane), keyEquivalent: "").target = self
+        fileMenu.addItem(withTitle: "Close Selected Terminal", action: #selector(menuClosePane), keyEquivalent: "").target = self
         fileMenu.addItem(withTitle: "Focus Pane", action: #selector(menuFocus), keyEquivalent: "").target = self
         fileItem.submenu = fileMenu
         bar.addItem(fileItem)
@@ -186,12 +198,32 @@ final class TileApp: NSObject, NSApplicationDelegate {
         viewMenu.addItem(fullScreenItem)
         viewItem.submenu = viewMenu
         bar.addItem(viewItem)
+        let helpItem = NSMenuItem()
+        let helpMenu = NSMenu(title: "Help")
+        helpMenu.addItem(withTitle: "Keyboard Shortcuts…", action: #selector(menuShortcutReference), keyEquivalent: "").target = self
+        helpItem.submenu = helpMenu
+        bar.addItem(helpItem)
         NSApp.mainMenu = bar
     }
     @objc private func menuNewPane() { if let window = activeWindow { addPane(to: window) } else { newWindow() } }
     @objc private func menuNewWindow() { newWindow() }
+    @objc private func menuFocusSelectedTerminal() { if let window = activeWindow { window.focusTerminal(window.currentSession) } }
+    @objc private func menuRenamePane() { if let session = activeWindow?.currentSession { activeWindow?.rename(session) } }
+    @objc private func menuClosePane() { if let session = activeWindow?.currentSession { activeWindow?.close(session) } }
     @objc private func menuFocus() { activeWindow?.toggleFocus() }
     @objc private func menuToggleFullScreen() { activeWindow?.toggleDesktopFullScreen() }
+    @objc private func menuShortcutReference() {
+        let actions: [TileAction] = [.newPane, .focusSelectedTerminal, .renamePane, .closePane,
+                                     .focusLeft, .focusRight, .focusUp, .focusDown,
+                                     .workspace1, .workspace2, .workspace3, .workspace4,
+                                     .nextWorkspace, .previousWorkspace, .focusPane]
+        let alert = NSAlert()
+        alert.messageText = "Keyboard shortcuts"
+        alert.informativeText = actions.map { "\($0.title): \($0.shortcut)" }.joined(separator: "\n")
+        alert.addButton(withTitle: "Done")
+        alert.addButton(withTitle: "Settings…")
+        if alert.runModal() == .alertSecondButtonReturn { showSettings() }
+    }
 }
 
 let app = NSApplication.shared
@@ -203,6 +235,8 @@ if CommandLine.arguments.contains("--smoke-test") {
     exit(runFourPaneLayoutTest() ? 0 : 1)
 } else if CommandLine.arguments.contains("--focus-test") {
     exit(runInputFocusTest() ? 0 : 1)
+} else if CommandLine.arguments.contains("--keyboard-test") {
+    exit(runKeyboardWorkflowTest() ? 0 : 1)
 } else {
     let delegate = TileApp()
     app.delegate = delegate
