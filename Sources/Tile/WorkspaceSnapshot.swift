@@ -21,6 +21,7 @@ struct WorkspaceSnapshot: Codable {
 @MainActor
 extension TileApp {
     func saveWorkspace() {
+        guard !isRestoringWorkspace else { return }
         let snapshot = WorkspaceSnapshot(windows: windows.compactMap { controller in
             guard let frame = controller.frameForRestoration else { return nil }
             let groups = controller.workspaces.map { workspace in
@@ -38,6 +39,7 @@ extension TileApp {
         guard let data = UserDefaults.standard.data(forKey: "workspaceSnapshot"),
               let snapshot = try? JSONDecoder().decode(WorkspaceSnapshot.self, from: data),
               !snapshot.windows.isEmpty else { return false }
+        isRestoringWorkspace = true
         for saved in snapshot.windows {
             let groups = saved.workspaces.map { group in
                 let workspace = Workspace(id: group.id, panes: group.panes.map { pane in
@@ -56,10 +58,12 @@ extension TileApp {
             controller.selectedPane = controller.workspace.panes.first?.id
             controller.render()
             let frame = NSRectFromString(saved.frame)
-            if !frame.isEmpty { controller.window?.setFrame(frame, display: true) }
+            if !frame.isEmpty { controller.window?.setFrame(TileWindow.reachableFrame(frame, screens: NSScreen.screens.map(\.visibleFrame)), display: true) }
             lastWindow = controller
         }
         lastWindow?.window?.makeKeyAndOrderFront(nil)
+        isRestoringWorkspace = false
+        saveWorkspace()
         return true
     }
 }

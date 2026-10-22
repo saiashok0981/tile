@@ -40,7 +40,8 @@ enum TerminalTheme: String, CaseIterable {
 }
 
 enum TileAction: String, CaseIterable {
-    case newPane, focusPane, nextWorkspace, previousWorkspace
+    case newPane, newWindow, focusPane, focusSelectedTerminal, renamePane, closePane, reopenPane, toggleFullScreen
+    case nextWorkspace, previousWorkspace
     case focusLeft, focusRight, focusUp, focusDown
     case swapLeft, swapRight, swapUp, swapDown
     case moveToNextWorkspace, raiseWindow
@@ -50,7 +51,13 @@ enum TileAction: String, CaseIterable {
     var title: String {
         switch self {
         case .newPane: "New terminal"
+        case .newWindow: "New window"
         case .focusPane: "Focus pane"
+        case .focusSelectedTerminal: "Focus selected terminal"
+        case .renamePane: "Rename selected terminal"
+        case .closePane: "Close selected terminal"
+        case .reopenPane: "Reopen closed terminal"
+        case .toggleFullScreen: "Toggle full screen"
         case .nextWorkspace: "Next workspace"
         case .previousWorkspace: "Previous workspace"
         case .focusLeft: "Focus left"
@@ -77,23 +84,29 @@ enum TileAction: String, CaseIterable {
     var defaultShortcut: String {
         switch self {
         case .newPane: "cmd+n"
+        case .newWindow: "cmd+shift+n"
         case .focusPane: "cmd+shift+f"
+        case .focusSelectedTerminal: "cmd+shift+return"
+        case .renamePane: "cmd+shift+r"
+        case .closePane: "cmd+shift+w"
+        case .reopenPane: "cmd+shift+t"
+        case .toggleFullScreen: "cmd+ctrl+f"
         case .nextWorkspace: "cmd+option+right"
         case .previousWorkspace: "cmd+option+left"
-        case .focusLeft: "cmd+ctrl+left"
-        case .focusRight: "cmd+ctrl+right"
-        case .focusUp: "cmd+ctrl+up"
-        case .focusDown: "cmd+ctrl+down"
+        case .focusLeft: "option+left"
+        case .focusRight: "option+right"
+        case .focusUp: "option+up"
+        case .focusDown: "option+down"
         case .swapLeft: "cmd+ctrl+shift+left"
         case .swapRight: "cmd+ctrl+shift+right"
         case .swapUp: "cmd+ctrl+shift+up"
         case .swapDown: "cmd+ctrl+shift+down"
         case .moveToNextWorkspace: "cmd+ctrl+shift+return"
         case .raiseWindow: "cmd+option+space"
-        case .workspace1: "cmd+option+1"
-        case .workspace2: "cmd+option+2"
-        case .workspace3: "cmd+option+3"
-        case .workspace4: "cmd+option+4"
+        case .workspace1: "cmd+1"
+        case .workspace2: "cmd+2"
+        case .workspace3: "cmd+3"
+        case .workspace4: "cmd+4"
         case .workspace5: "cmd+option+5"
         case .workspace6: "cmd+option+6"
         case .workspace7: "cmd+option+7"
@@ -101,7 +114,23 @@ enum TileAction: String, CaseIterable {
         case .workspace9: "cmd+option+9"
         }
     }
-    var shortcut: String { UserDefaults.standard.string(forKey: "shortcut.\(rawValue)") ?? defaultShortcut }
+    private var previousDefaultShortcut: String? {
+        switch self {
+        case .focusLeft: "cmd+ctrl+left"
+        case .focusRight: "cmd+ctrl+right"
+        case .focusUp: "cmd+ctrl+up"
+        case .focusDown: "cmd+ctrl+down"
+        case .workspace1: "cmd+option+1"
+        case .workspace2: "cmd+option+2"
+        case .workspace3: "cmd+option+3"
+        case .workspace4: "cmd+option+4"
+        default: nil
+        }
+    }
+    var shortcut: String {
+        guard let saved = UserDefaults.standard.string(forKey: "shortcut.\(rawValue)") else { return defaultShortcut }
+        return saved == previousDefaultShortcut ? defaultShortcut : saved
+    }
 }
 
 enum Shortcuts {
@@ -112,6 +141,7 @@ enum Shortcuts {
         guard isSimpleKey || ["left", "right", "up", "down", "space", "return"].contains(key),
               parts.dropLast().allSatisfy({ ["cmd", "ctrl", "option", "shift"].contains($0) }) else { return nil }
         let modifiers = Set(parts.dropLast())
+        guard modifiers.count == parts.count - 1 else { return nil }
         return (["cmd", "ctrl", "option", "shift"].filter(modifiers.contains) + [key]).joined(separator: "+")
     }
     static func from(_ event: NSEvent) -> String? {
@@ -162,9 +192,10 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate {
         root.hasVerticalScroller = true
         root.autoresizingMask = [.width, .height]
         window.contentView = root
-        let form = NSView(frame: NSRect(x: 0, y: 0, width: 510, height: 1100))
+        let formHeight = max(CGFloat(1200), CGFloat(TileAction.allCases.count * 31 + 430))
+        let form = NSView(frame: NSRect(x: 0, y: 0, width: 510, height: formHeight))
         root.documentView = form
-        var y: CGFloat = 1062
+        var y: CGFloat = formHeight - 38
         func label(_ text: String, at x: CGFloat = 20, width: CGFloat = 240) {
             let view = NSTextField(labelWithString: text)
             view.frame = NSRect(x: x, y: y, width: width, height: 22)
@@ -173,7 +204,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate {
         label("Terminal and layout")
         y -= 34
         dragCheck.frame = NSRect(x: 20, y: y, width: 260, height: 22)
-        dragCheck.state = UserDefaults.standard.object(forKey: "dragEnabled") as? Bool == false ? .off : .on
+        dragCheck.state = UserDefaults.standard.bool(forKey: "dragEnabled") ? .on : .off
         form.addSubview(dragCheck)
         y -= 28
         titlesCheck.frame = NSRect(x: 20, y: y, width: 260, height: 22)
@@ -253,6 +284,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate {
             values[action] = normalized
         }
         guard Set(values.values).count == values.count else { showError("Each shortcut must be unique."); return }
+        guard !values.values.contains("cmd+q") else { showError("Command-Q is reserved for Quit Tile."); return }
         guard let global = values[.raiseWindow], GlobalHotKey.supports(global) else {
             showError("Choose a supported key for the app-wide shortcut.")
             return
