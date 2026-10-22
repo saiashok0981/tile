@@ -109,8 +109,13 @@ enum AgentIntegrations {
             if command.contains("--agent-statusline"),
                let backup = try? Data(contentsOf: backupURL),
                let saved = try? JSONSerialization.jsonObject(with: backup) as? [String: Any] {
-                if let original = saved["statusLine"], !(original is NSNull) { root["statusLine"] = original }
-                else { root.removeValue(forKey: "statusLine") }
+                if var original = saved["statusLine"] as? [String: Any] {
+                    let current = root["statusLine"] as? [String: Any] ?? [:]
+                    for (key, value) in current where key != "command" && key != "type" {
+                        original[key] = value
+                    }
+                    root["statusLine"] = original
+                } else { root.removeValue(forKey: "statusLine") }
                 statusLineBackupToRemove = backupURL
             }
         }

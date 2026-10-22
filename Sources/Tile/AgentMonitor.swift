@@ -89,7 +89,7 @@ final class AgentMonitor {
     private var delivered: Set<String> = []
     private var dismissed: Set<String> = []
     private var resolved: Set<String> = []
-    private var recentClaudeApproval: [UUID: Date] = [:]
+    private var recentClaudeApproval: Set<UUID> = []
     private var turnGeneration: [UUID: Int] = [:]
     private let liveSession: (UUID) -> TerminalSession?
     private let ledgerURL: URL?
@@ -172,16 +172,16 @@ final class AgentMonitor {
             dismissed = dismissed.filter { !$0.hasPrefix("\(session.id.uuidString):") }
             delivered = delivered.filter { !$0.hasPrefix("\(session.id.uuidString):") }
             resolved = resolved.filter { !$0.hasPrefix("\(session.id.uuidString):") }
-            recentClaudeApproval.removeValue(forKey: session.id)
+            recentClaudeApproval.remove(session.id)
             pendingActions = pendingActions.filter { $0.value.paneID != session.id }
             turnGeneration[session.id] = 0
         }
         if event.provider == .claude, event.event == "approval",
            event.source.contains("Notification"),
-           let previous = recentClaudeApproval[session.id],
-           event.observedAt.timeIntervalSince(previous) < 30 { return }
+           recentClaudeApproval.contains(session.id) { return }
         if event.event == "start" {
             turnGeneration[session.id, default: 0] += 1
+            recentClaudeApproval.remove(session.id)
         }
         if event.event == "resolved" {
             let matching = pendingActions.filter { _, item in
@@ -208,7 +208,7 @@ final class AgentMonitor {
         let wasRunning = snapshots[session.id]?.phase == .running
         snapshots[session.id] = candidate
         if phase.priority != nil { pendingActions[key(for: candidate)] = candidate }
-        if event.provider == .claude, event.event == "approval" { recentClaudeApproval[session.id] = event.observedAt }
+        if event.provider == .claude, event.event == "approval" { recentClaudeApproval.insert(session.id) }
         if event.event == "start", !wasRunning { onRoutineStart?(candidate) }
         if phase.priority != nil, delivered.insert(key(for: candidate)).inserted { onNewAttention?(candidate) }
         persistLedger()
@@ -221,7 +221,7 @@ final class AgentMonitor {
         dismissed = dismissed.filter { !$0.hasPrefix("\(paneID.uuidString):") }
         delivered = delivered.filter { !$0.hasPrefix("\(paneID.uuidString):") }
         resolved = resolved.filter { !$0.hasPrefix("\(paneID.uuidString):") }
-        recentClaudeApproval.removeValue(forKey: paneID)
+        recentClaudeApproval.remove(paneID)
         turnGeneration.removeValue(forKey: paneID)
         persistLedger()
         onChange?()

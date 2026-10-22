@@ -17,10 +17,17 @@ func runAgentWorkflowTest() -> Bool {
         try AgentIntegrations.setEnabled(true, for: .claude, home: home, executable: "/tmp/Tile")
         guard AgentIntegrations.isEnabled(.claude, home: home) else { return false }
         try AgentIntegrations.setEnabled(true, for: .claude, home: home, executable: "/tmp/Tile")
+        if var enabled = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any],
+           var statusLine = enabled["statusLine"] as? [String: Any] {
+            statusLine["padding"] = 3
+            enabled["statusLine"] = statusLine
+            try JSONSerialization.data(withJSONObject: enabled).write(to: url)
+        } else { return false }
         try AgentIntegrations.setEnabled(false, for: .claude, home: home, executable: "/tmp/Tile")
         let restored = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
         guard restored?["theme"] as? String == "dark",
               (restored?["statusLine"] as? [String: Any])?["command"] as? String == "printf original",
+              (restored?["statusLine"] as? [String: Any])?["padding"] as? Int == 3,
               let hooks = restored?["hooks"] as? [String: Any],
               let stop = hooks["Stop"] as? [[String: Any]], stop.count == 1 else { return false }
     } catch {
@@ -117,6 +124,12 @@ func runAgentWorkflowTest() -> Bool {
     let alertCount = alerts
     guard sendHook("Claude Code", "Notification", #"{"session_id":"session-2","notification_type":"permission_prompt"}"#),
           alerts == alertCount else { return false }
+    let delayedNotification = AgentWireEvent(version: 1, provider: .claude, sessionID: "session-2",
+                                             paneToken: session.agentToken, event: "approval", actionID: nil,
+                                             observedAt: Date().addingTimeInterval(45),
+                                             source: "Claude Code Notification hook")
+    monitor.ingest(delayedNotification)
+    guard alerts == alertCount, monitor.attention(in: [session]).count == 1 else { return false }
     guard sendHook("Codex", "PermissionRequest", #"{"session_id":"session-3","turn_id":"turn-3","tool_use_id":"tool-3"}"#),
           monitor.snapshot(for: session.id)?.provider == .codex,
           monitor.snapshot(for: session.id)?.phase == .approvalRequired else { return false }
