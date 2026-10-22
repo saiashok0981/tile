@@ -40,7 +40,7 @@ enum TerminalTheme: String, CaseIterable {
 }
 
 enum TileAction: String, CaseIterable {
-    case newPane, focusPane, focusSelectedTerminal, renamePane, closePane
+    case newPane, newWindow, focusPane, focusSelectedTerminal, renamePane, closePane, reopenPane, toggleFullScreen
     case nextWorkspace, previousWorkspace
     case focusLeft, focusRight, focusUp, focusDown
     case swapLeft, swapRight, swapUp, swapDown
@@ -51,10 +51,13 @@ enum TileAction: String, CaseIterable {
     var title: String {
         switch self {
         case .newPane: "New terminal"
+        case .newWindow: "New window"
         case .focusPane: "Focus pane"
         case .focusSelectedTerminal: "Focus selected terminal"
         case .renamePane: "Rename selected terminal"
         case .closePane: "Close selected terminal"
+        case .reopenPane: "Reopen closed terminal"
+        case .toggleFullScreen: "Toggle full screen"
         case .nextWorkspace: "Next workspace"
         case .previousWorkspace: "Previous workspace"
         case .focusLeft: "Focus left"
@@ -81,10 +84,13 @@ enum TileAction: String, CaseIterable {
     var defaultShortcut: String {
         switch self {
         case .newPane: "cmd+n"
+        case .newWindow: "cmd+shift+n"
         case .focusPane: "cmd+shift+f"
         case .focusSelectedTerminal: "cmd+shift+return"
         case .renamePane: "cmd+shift+r"
         case .closePane: "cmd+shift+w"
+        case .reopenPane: "cmd+shift+t"
+        case .toggleFullScreen: "cmd+ctrl+f"
         case .nextWorkspace: "cmd+option+right"
         case .previousWorkspace: "cmd+option+left"
         case .focusLeft: "option+left"
@@ -135,6 +141,7 @@ enum Shortcuts {
         guard isSimpleKey || ["left", "right", "up", "down", "space", "return"].contains(key),
               parts.dropLast().allSatisfy({ ["cmd", "ctrl", "option", "shift"].contains($0) }) else { return nil }
         let modifiers = Set(parts.dropLast())
+        guard modifiers.count == parts.count - 1 else { return nil }
         return (["cmd", "ctrl", "option", "shift"].filter(modifiers.contains) + [key]).joined(separator: "+")
     }
     static func from(_ event: NSEvent) -> String? {
@@ -185,9 +192,10 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate {
         root.hasVerticalScroller = true
         root.autoresizingMask = [.width, .height]
         window.contentView = root
-        let form = NSView(frame: NSRect(x: 0, y: 0, width: 510, height: 1200))
+        let formHeight = max(CGFloat(1200), CGFloat(TileAction.allCases.count * 31 + 430))
+        let form = NSView(frame: NSRect(x: 0, y: 0, width: 510, height: formHeight))
         root.documentView = form
-        var y: CGFloat = 1162
+        var y: CGFloat = formHeight - 38
         func label(_ text: String, at x: CGFloat = 20, width: CGFloat = 240) {
             let view = NSTextField(labelWithString: text)
             view.frame = NSRect(x: x, y: y, width: width, height: 22)
@@ -196,7 +204,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate {
         label("Terminal and layout")
         y -= 34
         dragCheck.frame = NSRect(x: 20, y: y, width: 260, height: 22)
-        dragCheck.state = UserDefaults.standard.object(forKey: "dragEnabled") as? Bool == false ? .off : .on
+        dragCheck.state = UserDefaults.standard.bool(forKey: "dragEnabled") ? .on : .off
         form.addSubview(dragCheck)
         y -= 28
         titlesCheck.frame = NSRect(x: 20, y: y, width: 260, height: 22)
@@ -276,6 +284,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate {
             values[action] = normalized
         }
         guard Set(values.values).count == values.count else { showError("Each shortcut must be unique."); return }
+        guard !values.values.contains("cmd+q") else { showError("Command-Q is reserved for Quit Tile."); return }
         guard let global = values[.raiseWindow], GlobalHotKey.supports(global) else {
             showError("Choose a supported key for the app-wide shortcut.")
             return

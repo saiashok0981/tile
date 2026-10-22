@@ -198,6 +198,22 @@ func runInputFocusTest() -> Bool {
             return
         }
         _ = controller.window?.makeFirstResponder(second.view)
+        controller.toggleFocus()
+        guard controller.focused,
+              viewDescendants(root).compactMap({ $0 as? PaneView }).count == 1,
+              controller.window?.firstResponder === second.view else {
+            fputs("Focus mode did not expand and focus the selected terminal\n", stderr)
+            NSApp.stop(nil)
+            return
+        }
+        _ = controller.window?.makeFirstResponder(nil)
+        guard controller.escapeFocus(), !controller.focused,
+              viewDescendants(root).compactMap({ $0 as? PaneView }).count == 2,
+              controller.window?.firstResponder === second.view else {
+            fputs("Leaving Focus did not restore split layout and input\n", stderr)
+            NSApp.stop(nil)
+            return
+        }
         controller.close(second)
         guard controller.window?.firstResponder === first.view, hasFocusCue(first) else {
             fputs("Closing the active terminal did not focus the remaining terminal\n", stderr)
@@ -268,6 +284,18 @@ func runFourPaneLayoutTest() -> Bool {
         fputs("Wide-window toolbar alignment failed: settings at \(settingsFrame.maxX), edge \(root.bounds.maxX), clock center \(clockFrame.midX), free-space center \(freeSpaceCenter)\n", stderr)
         return false
     }
+    controller.window?.setContentSize(NSSize(width: 500, height: 500))
+    root.layoutSubtreeIfNeeded()
+    guard let picker = viewDescendants(root).compactMap({ $0 as? NSPopUpButton }).first(where: { $0.isHidden == false }),
+          brand.isHidden, clock.isHidden, tabs.isHidden,
+          !plus.isHidden, !settings.isHidden,
+          root.bounds.contains(plus.convert(plus.bounds, to: root)),
+          root.bounds.contains(settings.convert(settings.bounds, to: root)),
+          root.bounds.contains(picker.convert(picker.bounds, to: root)) else {
+        fputs("Compact toolbar hides an essential control\n", stderr)
+        return false
+    }
+    controller.window?.setContentSize(NSSize(width: 1600, height: 900))
     plus.performClick(nil)
     RunLoop.current.run(until: Date().addingTimeInterval(0.1))
     controller.window?.contentView?.layoutSubtreeIfNeeded()
@@ -392,11 +420,32 @@ func runSmokeTest() -> Bool {
     let previousSnapshot = defaults.data(forKey: "workspaceSnapshot")
     let previousTheme = defaults.string(forKey: "terminalTheme")
     let previousFocusLeft = defaults.object(forKey: "shortcut.focusLeft")
+    let previousDrag = defaults.object(forKey: "dragEnabled")
     defaults.set(TerminalTheme.oceanBlue.rawValue, forKey: "terminalTheme")
     defer {
         defaults.set(previousSnapshot, forKey: "workspaceSnapshot")
         defaults.set(previousTheme, forKey: "terminalTheme")
         defaults.set(previousFocusLeft, forKey: "shortcut.focusLeft")
+        defaults.set(previousDrag, forKey: "dragEnabled")
+    }
+    defaults.removeObject(forKey: "dragEnabled")
+    let preferenceCheck = TileApp()
+    guard !preferenceCheck.dragEnabled else { fputs("Dragging is on for a new installation\n", stderr); return false }
+    defaults.set(true, forKey: "dragEnabled")
+    guard preferenceCheck.dragEnabled else { fputs("Saved dragging-on preference was lost\n", stderr); return false }
+    defaults.set(false, forKey: "dragEnabled")
+    guard !preferenceCheck.dragEnabled else { fputs("Saved dragging-off preference was lost\n", stderr); return false }
+    guard Shortcuts.normalized("cmd+cmd+n") == nil,
+          TileAction.allCases.map(\.defaultShortcut).count == Set(TileAction.allCases.map(\.defaultShortcut)).count else {
+        fputs("Shortcut validation or defaults conflict\n", stderr); return false
+    }
+    let screen = NSRect(x: 0, y: 0, width: 1440, height: 900)
+    let disconnectedFrame = NSRect(x: 3000, y: 100, width: 1080, height: 720)
+    guard TileWindow.reachableFrame(disconnectedFrame, screens: [screen]) == NSRect(x: 360, y: 100, width: 1080, height: 720),
+          TileWindow.reachableFrame(NSRect(x: -100, y: -80, width: 700, height: 500), screens: [screen]).minX == 0,
+          TileWindow.reachableFrame(NSRect(x: 1500, y: 100, width: 600, height: 500),
+                                    screens: [screen, NSRect(x: 1440, y: 0, width: 1440, height: 900)]).minX == 1500 else {
+        fputs("Disconnected display frame was not recovered\n", stderr); return false
     }
     defaults.set("cmd+ctrl+left", forKey: "shortcut.focusLeft")
     guard TileAction.focusLeft.shortcut == "option+left" else {
@@ -419,7 +468,36 @@ func runSmokeTest() -> Bool {
             window.window?.close()
         }
     }
+    let closedSession = source.currentSession!
+    closedSession.customTitle = "recent work"
+    let originalDirectory = closedSession.directory
+    source.close(closedSession)
+    guard app.recentlyClosedPane?.customTitle == "recent work" else {
+        fputs("Closed terminal metadata was not captured\n", stderr); return false
+    }
+    app.reopenClosedPane()
+    guard let reopened = source.currentSession,
+          reopened.id != closedSession.id,
+          reopened.view.process.shellPid != closedSession.view.process.shellPid,
+          reopened.customTitle == "recent work",
+          reopened.directory == originalDirectory,
+          reopened.view.process.running,
+          !source.allSessions.contains(where: { $0 === closedSession }),
+          app.recentlyClosedPane == nil else {
+        fputs("Reopen did not create a fresh shell with saved pane details\n", stderr); return false
+    }
     for _ in 0..<4 { app.addPane(to: source) }
+    let recoveredWorkspaceID = source.workspace.id
+    source.workspace.topRatio = 0.63
+    let solePane = source.currentSession!
+    source.close(solePane)
+    app.reopenClosedPane()
+    guard source.selectedWorkspace == 1,
+          source.workspace.id == recoveredWorkspaceID,
+          source.workspace.topRatio == 0.63,
+          source.workspace.panes.count == 1 else {
+        fputs("Reopening the last pane did not recover its workspace\n", stderr); return false
+    }
     guard TileAction.focusLeft.defaultShortcut == "option+left",
           TileAction.focusRight.defaultShortcut == "option+right",
           TileAction.workspace1.defaultShortcut == "cmd+1",
@@ -469,6 +547,23 @@ func runSmokeTest() -> Bool {
     guard !session.hasRunningCommand else { fputs("Idle shell was marked busy\n", stderr); return false }
     app.newWindow()
     let destination = app.windows[1]
+    source.selectWorkspace(1)
+    source.workspace.topRatio = 0.42
+    destination.workspace.topRatio = 0.67
+    let sourceWorkspaceIDs = source.workspaces.map(\.id)
+    let destinationWorkspaceIDs = destination.workspaces.map(\.id)
+    destination.window?.setFrame(NSRect(x: 3000, y: 100, width: 700, height: 500), display: true)
+    app.displaysChanged()
+    guard source.selectedWorkspace == 1,
+          source.workspace.topRatio == 0.42,
+          destination.selectedWorkspace == 0,
+          destination.workspace.topRatio == 0.67,
+          source.workspaces.map(\.id) == sourceWorkspaceIDs,
+          destination.workspaces.map(\.id) == destinationWorkspaceIDs,
+          let destinationFrame = destination.window?.frame,
+          NSScreen.screens.contains(where: { $0.visibleFrame.contains(destinationFrame) }) else {
+        fputs("Display reconciliation changed independent window state\n", stderr); return false
+    }
     guard app.move(session.id, to: destination, before: nil),
           destination.allSessions.contains(where: { $0.id == session.id }),
           session.view.process.shellPid == pid,
@@ -551,7 +646,10 @@ func runSmokeTest() -> Bool {
 
     app.saveWorkspace()
     runningPane.customTitle = "dev api"
+    source.selectWorkspace(0)
+    source.workspace.topRatio = 0.37
     app.saveWorkspace()
+    let originalPIDs = Set(app.windows.flatMap(\.allSessions).map { $0.view.process.shellPid })
     let restored = TileApp()
     guard restored.restoreWorkspace() else { fputs("Workspace restore failed\n", stderr); return false }
     defer {
@@ -562,9 +660,13 @@ func runSmokeTest() -> Bool {
         }
     }
     guard restored.windows.count == 2,
+          restored.windows[0].selectedWorkspace == 0,
+          abs(restored.windows[0].workspace.topRatio - 0.37) < 0.01,
+          restored.windows[0].workspaces.map(\.id) == source.workspaces.map(\.id),
           restored.windows[1].allSessions.contains(where: { $0.customTitle == "dev api" }),
           restored.windows[1].allSessions.contains(where: { $0.directory == "/private/tmp" }),
-          restored.windows[1].allSessions.allSatisfy({ $0.view.process.running }) else {
+          restored.windows[1].allSessions.allSatisfy({ $0.view.process.running }),
+          restored.windows.flatMap(\.allSessions).allSatisfy({ !originalPIDs.contains($0.view.process.shellPid) }) else {
         fputs("Restored window or shell check failed\n", stderr)
         return false
     }

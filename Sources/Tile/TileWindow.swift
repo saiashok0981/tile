@@ -196,9 +196,11 @@ final class PaneView: NSView {
         renameButton.target = self
         renameButton.action = #selector(renamePane)
         renameButton.toolTip = "Rename terminal"
+        renameButton.setAccessibilityLabel("Rename terminal")
         close.target = self
         close.action = #selector(closePane)
         close.toolTip = "Close terminal"
+        close.setAccessibilityLabel("Close terminal")
         addSubview(header)
         header.onRename = { [weak self] in self?.onRename?() }
         header.addSubview(inputFocusIndicator)
@@ -280,6 +282,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     private let toolbar = NSStackView()
     private let brand = TileBrandView()
     private let tabs = NSStackView()
+    private let workspacePicker = NSPopUpButton()
     private let toolbarSpacer = NSView()
     private let toolbarTrailingSpacer = NSView()
     private let clockLabel = NSTextField(labelWithString: "")
@@ -326,6 +329,11 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         tabs.spacing = 3
         tabs.identifier = NSUserInterfaceItemIdentifier("tile.workspaceTabs")
         toolbar.addArrangedSubview(tabs)
+        workspacePicker.isHidden = true
+        workspacePicker.setAccessibilityLabel("Choose workspace")
+        workspacePicker.target = self
+        workspacePicker.action = #selector(selectWorkspaceFromPicker(_:))
+        toolbar.addArrangedSubview(workspacePicker)
         toolbarSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         toolbarSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         toolbar.addArrangedSubview(toolbarSpacer)
@@ -342,8 +350,12 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         clockTimer = Timer.scheduledTimer(timeInterval: 15, target: self, selector: #selector(updateClock), userInfo: nil, repeats: true)
         exitFullScreen.isHidden = true
         plus.toolTip = "New terminal"
+        plus.setAccessibilityLabel("New terminal")
         focus.toolTip = "Focus selected terminal pane"
+        focus.setAccessibilityLabel("Focus selected terminal pane")
+        exitFullScreen.setAccessibilityLabel("Exit full screen")
         settings.toolTip = "Settings"
+        settings.setAccessibilityLabel("Settings")
         for (button, action) in [(plus, #selector(addPane)), (focus, #selector(toggleFocus)), (exitFullScreen, #selector(toggleDesktopFullScreen)), (settings, #selector(openSettings))] {
             button.target = self
             button.action = action
@@ -366,6 +378,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         ])
         render()
         showWindow(nil)
+        updateCompactToolbar()
         focusTerminal(currentSession)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
@@ -374,6 +387,27 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     var currentSession: TerminalSession? { workspace.panes.first { $0.id == selectedPane } ?? workspace.panes.first }
     var isDesktopFullScreen: Bool { normalFrame != nil }
     var frameForRestoration: NSRect? { normalFrame ?? window?.frame }
+    static func reachableFrame(_ frame: NSRect, screens: [NSRect]) -> NSRect {
+        guard !screens.isEmpty else { return frame }
+        let intersections = screens.map { screen -> (NSRect, CGFloat) in
+            let area = frame.intersection(screen)
+            return (screen, area.width * area.height)
+        }
+        let best = intersections.max { $0.1 < $1.1 }
+        let screen: NSRect
+        if let best, best.1 > 0 { screen = best.0 }
+        else { screen = screens[0] }
+        let width = min(frame.width, screen.width)
+        let height = min(frame.height, screen.height)
+        return NSRect(x: min(max(frame.minX, screen.minX), screen.maxX - width),
+                      y: min(max(frame.minY, screen.minY), screen.maxY - height),
+                      width: width, height: height)
+    }
+    func keepOnAvailableScreen() {
+        guard let window, !isDesktopFullScreen else { return }
+        let frame = Self.reachableFrame(window.frame, screens: NSScreen.screens.map(\.visibleFrame))
+        if frame != window.frame { window.setFrame(frame, display: true) }
+    }
     func focusTerminal(_ session: TerminalSession?) {
         guard let session else { return }
         _ = window?.makeFirstResponder(session.view)
@@ -390,6 +424,27 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         } else if let target, let index = workspace.panes.firstIndex(where: { $0.id == target.id }) {
             workspace.panes.insert(session, at: index)
         } else { workspace.panes.append(session) }
+        selectedPane = session.id
+        focused = false
+        render()
+        focusTerminal(session)
+    }
+    func reopen(_ session: TerminalSession, from closed: TileApp.ClosedPane) {
+        if let target = workspaces.firstIndex(where: { $0.id == closed.workspaceID && $0.panes.count < 4 }) {
+            selectedWorkspace = target
+        } else if !workspaces.contains(where: { $0.id == closed.workspaceID }) {
+            if workspaces.count == 1 && workspaces[0].panes.isEmpty { workspaces.removeAll() }
+            let recovered = Workspace(id: closed.workspaceID)
+            recovered.topRatio = closed.topRatio
+            recovered.bottomRatio = closed.bottomRatio
+            recovered.rowRatio = closed.rowRatio
+            selectedWorkspace = min(closed.workspaceIndex, workspaces.count)
+            workspaces.insert(recovered, at: selectedWorkspace)
+        } else {
+            workspaces.append(Workspace())
+            selectedWorkspace = workspaces.count - 1
+        }
+        workspace.panes.insert(session, at: min(max(closed.paneIndex, 0), workspace.panes.count))
         selectedPane = session.id
         focused = false
         render()
@@ -422,6 +477,13 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
             button.setAccessibilityLabel(description)
             tabs.addArrangedSubview(button)
         }
+        workspacePicker.removeAllItems()
+        for index in workspaces.indices { workspacePicker.addItem(withTitle: "Workspace \(index + 1)") }
+        workspacePicker.selectItem(at: selectedWorkspace)
+        focus.title = focused ? "Exit Focus" : "Focus"
+        focus.toolTip = focused ? "Exit Focus and restore the split layout" : "Focus selected terminal pane"
+        focus.setAccessibilityLabel(focus.toolTip ?? focus.title)
+        updateCompactToolbar()
         content.subviews.forEach { $0.removeFromSuperview() }
         paneViews.removeAll()
         let sessions = focused ? workspace.panes.filter { $0.id == selectedPane } : workspace.panes
@@ -525,7 +587,10 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         split.isVertical = vertical
         split.dividerStyle = .thin
         split.ratio = ratio
-        split.onRatioChange = onChange
+        split.onRatioChange = { [weak self] value in
+            onChange(value)
+            self?.app?.scheduleLayoutSave()
+        }
         views.forEach(split.addSubview)
         return split
     }
@@ -534,6 +599,16 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     }
     func close(_ session: TerminalSession) {
         guard app?.confirmClose([session]) == true else { return }
+        session.refreshDirectory()
+        if let workspaceIndex = workspaces.firstIndex(where: { $0.panes.contains(where: { $0.id == session.id }) }),
+           let paneIndex = workspaces[workspaceIndex].panes.firstIndex(where: { $0.id == session.id }) {
+            let workspace = workspaces[workspaceIndex]
+            app?.recentlyClosedPane = TileApp.ClosedPane(directory: session.directory, customTitle: session.customTitle,
+                                                         windowID: id, workspaceID: workspace.id,
+                                                         workspaceIndex: workspaceIndex, paneIndex: paneIndex,
+                                                         topRatio: workspace.topRatio, bottomRatio: workspace.bottomRatio,
+                                                         rowRatio: workspace.rowRatio)
+        }
         remove(session, terminate: true)
         app?.saveWorkspace()
     }
@@ -566,6 +641,7 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         guard focused else { return false }
         focused = false
         render()
+        focusTerminal(currentSession)
         return true
     }
     func navigate(dx: Int, dy: Int, swap: Bool) {
@@ -608,15 +684,27 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         if selectedPane == nil { selectedPane = workspace.panes.first?.id }
         focused.toggle()
         render()
+        focusTerminal(currentSession)
+    }
+    private func updateCompactToolbar() {
+        let compact = (window?.contentView?.bounds.width ?? 1080) < 760 || workspaces.count > 4
+        brand.isHidden = compact
+        clockLabel.isHidden = compact
+        tabs.isHidden = compact
+        workspacePicker.isHidden = !compact
     }
     @objc private func openSettings() { app?.showSettings() }
     @objc private func updateClock() { clockLabel.stringValue = TileClock.label(for: Date()) }
     @objc private func selectTab(_ sender: NSButton) { selectWorkspace(sender.tag) }
+    @objc private func selectWorkspaceFromPicker(_ sender: NSPopUpButton) { selectWorkspace(sender.indexOfSelectedItem) }
+    func windowDidResize(_ notification: Notification) { updateCompactToolbar() }
     func windowDidBecomeKey(_ notification: Notification) {
         app?.lastWindow = self
         updateInputFocusCue()
     }
     func windowDidResignKey(_ notification: Notification) { updateInputFocusCue() }
+    func windowDidMove(_ notification: Notification) { app?.saveWorkspace() }
+    func windowDidEndLiveResize(_ notification: Notification) { app?.saveWorkspace() }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard allowClose || app?.confirmClose(allSessions) == true else { return false }
         allSessions.forEach { $0.view.terminate() }
