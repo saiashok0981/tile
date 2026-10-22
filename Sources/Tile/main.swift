@@ -1,7 +1,8 @@
 import AppKit
+import UserNotifications
 
 @MainActor
-final class TileApp: NSObject, NSApplicationDelegate {
+final class TileApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     struct ClosedPane {
         let directory: String
         let customTitle: String?
@@ -20,10 +21,17 @@ final class TileApp: NSObject, NSApplicationDelegate {
     var dragEnabled: Bool { UserDefaults.standard.bool(forKey: "dragEnabled") }
     private var keyMonitor: Any?
     private var settingsWindow: SettingsWindow?
+    private var managedCodexSessions: [UUID: ManagedCodexSession] = [:]
+    private let agentBridge = AgentBridge()
+    lazy var agentMonitor = AgentMonitor(ledgerURL: AgentMonitor.defaultLedgerURL) { [weak self] token in
+        self?.windows.flatMap(\.allSessions).first { $0.agentToken == token }
+    }
     private let hotKey = GlobalHotKey()
     private var isTerminating = false
     var isRestoringWorkspace = false
     private var pendingLayoutSave: DispatchWorkItem?
+    private var previousAgentLocation: (window: UUID, workspace: UUID, pane: UUID)?
+    private var lastAgentAttention: UUID?
     func scheduleLayoutSave() {
         guard !isRestoringWorkspace else { return }
         pendingLayoutSave?.cancel()
@@ -35,6 +43,14 @@ final class TileApp: NSObject, NSApplicationDelegate {
     private var previousPresentationOptions: NSApplication.PresentationOptions?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        agentBridge.onEvent = { [weak self] event in self?.agentMonitor.ingest(event) }
+        agentMonitor.onChange = { [weak self] in self?.windows.forEach { $0.refreshAgentUI() } }
+        agentMonitor.onNewAttention = { [weak self] item in self?.notifyAboutAgent(item) }
+        agentMonitor.onRoutineStart = { [weak self] item in self?.notifyAboutAgent(item) }
+        if Bundle.main.bundleURL.pathExtension == "app" {
+            UNUserNotificationCenter.current().delegate = self
+        }
+        agentBridge.start()
         if !restoreWorkspace() { newWindow() }
         NotificationCenter.default.addObserver(self, selector: #selector(displaysChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -86,6 +102,8 @@ final class TileApp: NSObject, NSApplicationDelegate {
     }
     func select(_ session: TerminalSession) {
         guard let window = window(containing: session) else { return }
+        if let index = window.workspaces.firstIndex(where: { $0.panes.contains { $0.id == session.id } }),
+           index != window.selectedWorkspace { window.selectWorkspace(index) }
         window.selectedPane = session.id
         window.window?.makeKeyAndOrderFront(nil)
         window.focusTerminal(session)
@@ -112,9 +130,81 @@ final class TileApp: NSObject, NSApplicationDelegate {
         return true
     }
     func removeWindow(_ window: TileWindow) {
+        window.allSessions.forEach { agentMonitor.remove(paneID: $0.id) }
         windows.removeAll { $0 === window }
         if lastWindow === window { lastWindow = windows.last }
         if !isTerminating { saveWorkspace() }
+    }
+    func agentDidExit(_ session: TerminalSession) {
+        managedCodexSessions.removeValue(forKey: session.id)?.close()
+        agentMonitor.remove(paneID: session.id)
+    }
+    func showManagedCodex(for session: TerminalSession) {
+        if let existing = managedCodexSessions[session.id] {
+            existing.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        let managed = ManagedCodexSession(pane: session, app: self)
+        managed.onClose = { [weak self] in self?.managedCodexSessions.removeValue(forKey: session.id) }
+        managedCodexSessions[session.id] = managed
+    }
+    func nextAgentNeedingAttention(in window: TileWindow) {
+        let items = agentMonitor.attention(in: window.workspace.panes)
+        guard !items.isEmpty else { return }
+        if previousAgentLocation == nil, let current = window.currentSession {
+            previousAgentLocation = (window.id, window.workspace.id, current.id)
+        }
+        let nextIndex: Int
+        if let last = lastAgentAttention, let index = items.firstIndex(where: { $0.paneID == last }) {
+            nextIndex = (index + 1) % items.count
+        } else { nextIndex = 0 }
+        let paneID = items[nextIndex].paneID
+        lastAgentAttention = paneID
+        if let session = window.workspace.panes.first(where: { $0.id == paneID }) { select(session) }
+    }
+    func returnToPreviousPane() {
+        guard let previousAgentLocation,
+              let session = windows.flatMap(\.allSessions).first(where: { $0.id == previousAgentLocation.pane }) else {
+            self.previousAgentLocation = nil
+            lastAgentAttention = nil
+            return
+        }
+        self.previousAgentLocation = nil
+        lastAgentAttention = nil
+        select(session)
+    }
+    private func notifyAboutAgent(_ item: AgentSnapshot) {
+        let key: String
+        switch item.phase {
+        case .running: key = "notifyAgentActivity"
+        case .approvalRequired: key = "notifyAgentApproval"
+        case .questionRequired: key = "notifyAgentQuestion"
+        case .failed: key = "notifyAgentFailure"
+        case .completedNeedsReview: key = "notifyAgentCompletion"
+        default: return
+        }
+        guard Bundle.main.bundleURL.pathExtension == "app",
+              UserDefaults.standard.bool(forKey: key), !NSApp.isActive else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "\(item.provider.rawValue): \(item.phase.label)"
+        content.body = "Open the Tile terminal to review this agent."
+        if item.phase == .running || item.phase == .completedNeedsReview { content.interruptionLevel = .passive }
+        content.userInfo = ["paneID": item.paneID.uuidString]
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping () -> Void) {
+        let pane = response.notification.request.content.userInfo["paneID"] as? String
+        Task { @MainActor [weak self] in
+            if let pane, let id = UUID(uuidString: pane),
+               let session = self?.windows.flatMap(\.allSessions).first(where: { $0.id == id }) {
+                NSApp.activate(ignoringOtherApps: true)
+                self?.select(session)
+            }
+        }
+        completionHandler()
     }
     @objc func displaysChanged() {
         windows.forEach { $0.keepOnAvailableScreen() }
@@ -203,6 +293,8 @@ final class TileApp: NSObject, NSApplicationDelegate {
         case .swapDown: window.navigate(dx: 0, dy: 1, swap: true)
         case .moveToNextWorkspace: window.movePaneToNextWorkspace()
         case .raiseWindow: window.window?.makeKeyAndOrderFront(nil)
+        case .nextAgentAttention: nextAgentNeedingAttention(in: window)
+        case .returnToPreviousPane: returnToPreviousPane()
         case .workspace1: window.selectWorkspace(0)
         case .workspace2: window.selectWorkspace(1)
         case .workspace3: window.selectWorkspace(2)
@@ -265,11 +357,25 @@ final class TileApp: NSObject, NSApplicationDelegate {
     }
 }
 
+if let statusIndex = CommandLine.arguments.firstIndex(of: "--agent-statusline") {
+    let encoded = CommandLine.arguments.dropFirst(statusIndex + 1).first ?? ""
+    let original = Data(base64Encoded: encoded).flatMap { String(data: $0, encoding: .utf8) }
+    AgentHook.runClaudeStatusLine(originalCommand: original)
+    exit(0)
+}
+if let hookIndex = CommandLine.arguments.firstIndex(of: "--agent-hook") {
+    AgentHook.run(arguments: Array(CommandLine.arguments.dropFirst(hookIndex + 1)))
+    exit(0)
+}
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
 app.applicationIconImage = TileBrand.appIcon
 if CommandLine.arguments.contains("--smoke-test") {
     exit(runSmokeTest() ? 0 : 1)
+} else if CommandLine.arguments.contains("--agent-test") {
+    exit(runAgentWorkflowTest() ? 0 : 1)
+} else if CommandLine.arguments.contains("--managed-codex-test") {
+    exit(runManagedCodexProtocolTest() ? 0 : 1)
 } else if CommandLine.arguments.contains("--layout-test") {
     exit(runFourPaneLayoutTest() ? 0 : 1)
 } else if CommandLine.arguments.contains("--focus-test") {

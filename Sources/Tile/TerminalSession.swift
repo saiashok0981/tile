@@ -13,6 +13,7 @@ final class SelectableTerminalView: LocalProcessTerminalView {
 @MainActor
 final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     let id: UUID
+    let agentToken = UUID()
     let view: SelectableTerminalView
     var directory: String
     var title = "Terminal"
@@ -31,7 +32,12 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         view.font = NSFont.monospacedSystemFont(ofSize: CGFloat(size), weight: .regular)
         applyTheme()
         let shell = UserDefaults.standard.string(forKey: "shellPath") ?? ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        view.startProcess(executable: shell, execName: "-" + URL(fileURLWithPath: shell).lastPathComponent, currentDirectory: directory)
+        var environment = Terminal.getEnvironmentVariables(termName: "xterm-256color")
+        environment.append("TILE_AGENT_PANE_TOKEN=\(agentToken.uuidString)")
+        if let socket = AgentBridge.currentPath { environment.append("TILE_AGENT_SOCKET=\(socket)") }
+        view.startProcess(executable: shell, environment: environment,
+                          execName: "-" + URL(fileURLWithPath: shell).lastPathComponent,
+                          currentDirectory: directory)
     }
 
     func applyTheme() {
@@ -86,5 +92,8 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         if let url = URL(string: directory), url.isFileURL { self.directory = url.path }
         else if directory.hasPrefix("/") { self.directory = directory }
     }
-    func processTerminated(source: TerminalView, exitCode: Int32?) { onChange?() }
+    func processTerminated(source: TerminalView, exitCode: Int32?) {
+        (NSApp.delegate as? TileApp)?.agentDidExit(self)
+        onChange?()
+    }
 }
