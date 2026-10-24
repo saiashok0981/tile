@@ -98,13 +98,14 @@ func runAgentWorkflowTest() -> Bool {
         statusLine.waitUntilExit()
         guard forwarded == sample else { return false }
     } catch { return false }
-    func sendHook(_ provider: String, _ event: String, _ payload: String) -> Bool {
+    func sendHook(_ provider: String, _ event: String, _ payload: String,
+                  socketOverride: String? = nil) -> Bool {
         let hook = Process()
         hook.executableURL = URL(fileURLWithPath: executable)
         hook.arguments = ["--agent-hook", provider, event]
         var environment = ProcessInfo.processInfo.environment
         environment["TILE_AGENT_PANE_TOKEN"] = session.agentToken.uuidString
-        environment["TILE_AGENT_SOCKET"] = socketPath
+        environment["TILE_AGENT_SOCKET"] = socketOverride ?? socketPath
         hook.environment = environment
         let input = Pipe()
         hook.standardInput = input
@@ -123,6 +124,10 @@ func runAgentWorkflowTest() -> Bool {
           monitor.attention(in: [session]).first?.sessionID == "session-2" else { return false }
     let alertCount = alerts
     guard sendHook("Claude Code", "Notification", #"{"session_id":"session-2","notification_type":"permission_prompt"}"#),
+          alerts == alertCount else { return false }
+    let noBridge = "/tmp/tile-agent-missing-\(UUID().uuidString).sock"
+    guard sendHook("Codex", "PermissionRequest", #"{"session_id":"missing-bridge","tool_use_id":"missing"}"#,
+                   socketOverride: noBridge),
           alerts == alertCount else { return false }
     let delayedNotification = AgentWireEvent(version: 1, provider: .claude, sessionID: "session-2",
                                              paneToken: session.agentToken, event: "approval", actionID: nil,
@@ -150,8 +155,24 @@ func runAgentWorkflowTest() -> Bool {
                                paneToken: session.agentToken, event: "approval", actionID: "stale-1",
                                observedAt: Date().addingTimeInterval(-121), source: "Gemini CLI Notification hook")
     monitor.ingest(stale)
-    return monitor.snapshot(for: session.id)?.phase == .unknown &&
-        monitor.attention(in: [session]).first?.sessionID == "session-5"
+    guard monitor.snapshot(for: session.id)?.phase == .unknown,
+          monitor.attention(in: [session]).first?.sessionID == "session-5" else { return false }
+    session.view.terminate()
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    let restored = TerminalSession(directory: session.directory)
+    defer { restored.view.terminate() }
+    let afterRestart = AgentMonitor { token in
+        if token == session.agentToken { return session }
+        if token == restored.agentToken { return restored }
+        return nil
+    }
+    afterRestart.ingest(approval)
+    guard afterRestart.snapshot(for: restored.id) == nil else { return false }
+    let fresh = AgentWireEvent(version: 1, provider: .codex, sessionID: "new-shell",
+                               paneToken: restored.agentToken, event: "start", actionID: nil,
+                               observedAt: Date(), source: "Codex SessionStart hook")
+    afterRestart.ingest(fresh)
+    return afterRestart.snapshot(for: restored.id)?.phase == .running
 }
 
 @MainActor
@@ -168,6 +189,123 @@ func runManagedCodexProtocolTest() -> Bool {
     managed.close()
     if !connected { fputs("Managed Codex did not complete the app-server handshake\n", stderr) }
     return connected
+}
+
+@MainActor
+func runCodexLiveVerification() -> Bool {
+    let manager = FileManager.default
+    let directory = manager.temporaryDirectory.appending(path: "tile-codex-live-\(UUID().uuidString)")
+    do { try manager.createDirectory(at: directory, withIntermediateDirectories: true) }
+    catch { fputs("Cannot create live-test directory: \(error)\n", stderr); return false }
+    defer { try? manager.removeItem(at: directory) }
+
+    let bridge = AgentBridge()
+    bridge.start()
+    guard AgentBridge.currentPath != nil else { fputs("Agent bridge did not start\n", stderr); return false }
+    let app = TileApp()
+    let pane = TerminalSession(directory: directory.path)
+    defer { pane.view.terminate() }
+    let secondPane = TerminalSession(directory: directory.path)
+    defer { secondPane.view.terminate() }
+    let window = TileWindow(workspaces: [Workspace(panes: [pane])], owner: app)
+    app.windows.append(window)
+    window.window?.makeKeyAndOrderFront(nil)
+    let destination = TileWindow(workspaces: [Workspace(panes: [secondPane])], owner: app)
+    app.windows.append(destination)
+    defer { window.close(); destination.close() }
+    var events: [String] = []
+    var eventTokens: [UUID] = []
+    bridge.onEvent = { event in
+        events.append(event.event)
+        eventTokens.append(event.paneToken)
+        app.agentMonitor.ingest(event)
+    }
+
+    let output = directory.appending(path: "codex.jsonl")
+    let errors = directory.appending(path: "codex.stderr")
+    let done = directory.appending(path: "done")
+    let secondOutput = directory.appending(path: "codex-second.jsonl")
+    let secondErrors = directory.appending(path: "codex-second.stderr")
+    let secondDone = directory.appending(path: "second-done")
+    let command = "codex exec -C '\(directory.path)' --skip-git-repo-check --ephemeral --sandbox read-only --dangerously-bypass-hook-trust --json 'Reply exactly READY. Do not use tools.' </dev/null >'\(output.path)' 2>'\(errors.path)'; printf '%s' \"$?\" >'\(done.path)'\n"
+    let secondCommand = "codex exec -C '\(directory.path)' --skip-git-repo-check --ephemeral --sandbox read-only --dangerously-bypass-hook-trust --json 'Reply exactly READY. Do not use tools.' </dev/null >'\(secondOutput.path)' 2>'\(secondErrors.path)'; printf '%s' \"$?\" >'\(secondDone.path)'\n"
+    RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    let bytes = Array(command.utf8)
+    pane.view.process.send(data: bytes[...])
+    let secondBytes = Array(secondCommand.utf8)
+    secondPane.view.process.send(data: secondBytes[...])
+    let originalPID = pane.view.process.shellPid
+    window.remove(pane)
+    destination.add(pane)
+    guard pane.view.process.shellPid == originalPID,
+          app.window(containing: pane) === destination else { return false }
+    let deadline = Date().addingTimeInterval(90)
+    while (!manager.fileExists(atPath: done.path) || !manager.fileExists(atPath: secondDone.path)) && Date() < deadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+    }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    let status = (try? String(contentsOf: done, encoding: .utf8)) ?? "timed out"
+    let secondStatus = (try? String(contentsOf: secondDone, encoding: .utf8)) ?? "timed out"
+    let outputText = (try? String(contentsOf: output, encoding: .utf8)) ?? ""
+    let secondOutputText = (try? String(contentsOf: secondOutput, encoding: .utf8)) ?? ""
+    let errorText = (try? String(contentsOf: errors, encoding: .utf8)) ?? ""
+    let secondErrorText = (try? String(contentsOf: secondErrors, encoding: .utf8)) ?? ""
+    let turnCompleted = outputText.contains("\"type\":\"turn.completed\"")
+    let secondTurnCompleted = secondOutputText.contains("\"type\":\"turn.completed\"")
+    let snapshot = app.agentMonitor.snapshot(for: pane.id)
+    let secondSnapshot = app.agentMonitor.snapshot(for: secondPane.id)
+    func hookCount(_ name: String, token: UUID) -> Int {
+        zip(events, eventTokens).filter { $0.0 == name && $0.1 == token }.count
+    }
+    print("Codex live panes: exits=\(status),\(secondStatus), turnsCompleted=\(turnCompleted),\(secondTurnCompleted), hooks=\(events), linkedPanes=\(Set(eventTokens).count), movedPanePhase=\(snapshot?.phase.label ?? "none"), secondPanePhase=\(secondSnapshot?.phase.label ?? "none")")
+    if status != "0" { fputs("Codex stderr: \(errorText.prefix(600))\n", stderr) }
+    if secondStatus != "0" { fputs("Second Codex stderr: \(secondErrorText.prefix(600))\n", stderr) }
+    return status == "0" && secondStatus == "0" && turnCompleted && secondTurnCompleted &&
+        snapshot?.provider == .codex && secondSnapshot?.provider == .codex &&
+        snapshot?.sessionID != secondSnapshot?.sessionID &&
+        hookCount("start", token: pane.agentToken) >= 1 &&
+        hookCount("start", token: secondPane.agentToken) >= 1 &&
+        hookCount("completion", token: pane.agentToken) == 1 &&
+        hookCount("completion", token: secondPane.agentToken) == 1 &&
+        hookCount("end", token: pane.agentToken) == 1 &&
+        hookCount("end", token: secondPane.agentToken) == 1
+}
+
+@MainActor
+func runManagedCodexLiveVerification() -> Bool {
+    let directory = FileManager.default.temporaryDirectory.appending(path: "tile-managed-codex-live-\(UUID().uuidString)")
+    do { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+    catch { return false }
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let app = TileApp()
+    let pane = TerminalSession(directory: directory.path)
+    defer { pane.view.terminate() }
+    let window = TileWindow(workspaces: [Workspace(panes: [pane])], owner: app)
+    app.windows.append(window)
+    window.window?.makeKeyAndOrderFront(nil)
+    let managed = ManagedCodexSession(pane: pane, app: app)
+    defer { managed.close(); window.close() }
+    let connectionDeadline = Date().addingTimeInterval(10)
+    while !managed.isConnected && Date() < connectionDeadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    }
+    guard managed.isConnected else { fputs("Managed Codex did not connect\n", stderr); return false }
+    managed.submitPrompt("Reply exactly READY. Do not use tools.")
+    let turnDeadline = Date().addingTimeInterval(60)
+    while Date() < turnDeadline {
+        let snapshot = app.agentMonitor.snapshot(for: pane.id)
+        if snapshot?.phase == .completedNeedsReview { break }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+    let snapshot = app.agentMonitor.snapshot(for: pane.id)
+    let usage = snapshot?.usage
+    print("Managed Codex live pane: phase=\(snapshot?.phase.label ?? "none"), threadTokens=\(usage?.threadTotalTokens.map(String.init) ?? "unavailable"), accountPrimary=\(usage?.codexPrimary.map { String(Int($0.usedPercent)) } ?? "unavailable"), accountSecondary=\(usage?.codexSecondary.map { String(Int($0.usedPercent)) } ?? "unavailable"), attention=\(app.agentMonitor.attention(in: [pane]).count)")
+    managed.close()
+    RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+    let ended = app.agentMonitor.snapshot(for: pane.id)?.phase == .idle &&
+        app.agentMonitor.attention(in: [pane]).isEmpty
+    return snapshot?.phase == .completedNeedsReview && usage?.threadTotalTokens != nil && ended
 }
 
 @MainActor

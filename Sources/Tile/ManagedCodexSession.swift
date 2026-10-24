@@ -128,6 +128,11 @@ final class ManagedCodexSession: NSWindowController, NSWindowDelegate {
         request("turn/start", params: ["threadId": threadID, "input": [["type": "text", "text": text]], "cwd": pane.directory])
     }
 
+    func submitPrompt(_ text: String) {
+        prompt.stringValue = text
+        sendPrompt()
+    }
+
     private func receive(_ data: Data) {
         if data.isEmpty {
             outputPipe.fileHandleForReading.readabilityHandler = nil

@@ -275,6 +275,8 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate {
             form.addSubview(check)
             y -= 27
         }
+        label("Codex also requires reviewing Tile hooks with /hooks in Codex.", width: 470)
+        y -= 26
         y -= 8
         label("Agent notifications", width: 470)
         y -= 28

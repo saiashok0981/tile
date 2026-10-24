@@ -376,6 +376,10 @@ if CommandLine.arguments.contains("--smoke-test") {
     exit(runAgentWorkflowTest() ? 0 : 1)
 } else if CommandLine.arguments.contains("--managed-codex-test") {
     exit(runManagedCodexProtocolTest() ? 0 : 1)
+} else if CommandLine.arguments.contains("--codex-live-test") {
+    exit(runCodexLiveVerification() ? 0 : 1)
+} else if CommandLine.arguments.contains("--managed-codex-live-test") {
+    exit(runManagedCodexLiveVerification() ? 0 : 1)
 } else if CommandLine.arguments.contains("--layout-test") {
     exit(runFourPaneLayoutTest() ? 0 : 1)
 } else if CommandLine.arguments.contains("--focus-test") {
