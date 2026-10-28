@@ -6,7 +6,7 @@ let package = Package(
     platforms: [.macOS(.v15)],
     products: [.executable(name: "Tile", targets: ["Tile"])],
     dependencies: [
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.99.0")
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.99.1")
     ],
     targets: [
         .executableTarget(name: "Tile", dependencies: ["SwiftTerm"], resources: [.copy("Resources/TileLogo.png")])
