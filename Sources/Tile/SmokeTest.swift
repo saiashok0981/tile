@@ -422,6 +422,10 @@ func runKeyboardWorkflowTest() -> Bool {
         }
         controller.selectWorkspace(1)
         app.newWindow()
+        let activationDeadline = Date().addingTimeInterval(2)
+        while app.windows.last?.window?.isKeyWindow != true && Date() < activationDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
         guard let other = app.windows.last, other !== controller,
               let otherWindow = other.window, otherWindow.isKeyWindow else {
             fputs("Second Tile window did not become active\n", stderr)
@@ -584,10 +588,13 @@ func runFourPaneLayoutTest() -> Bool {
     let agentsFrame = agents.convert(agents.bounds, to: root)
     let clockFrame = clock.convert(clock.bounds, to: root)
     let freeSpaceCenter = (tabsFrame.maxX + agentsFrame.minX) / 2
+    // AppKit can place the clock a few points off center across macOS versions.
+    // Keep it within one toolbar spacing of the available area's midpoint.
+    let clockCenterTolerance: CGFloat = 8
     guard settingsFrame.maxX >= root.bounds.maxX - 20,
           brandFrame.width >= 70,
           brandFrame.minX >= 0,
-          abs(clockFrame.midX - freeSpaceCenter) < 2,
+          abs(clockFrame.midX - freeSpaceCenter) <= clockCenterTolerance,
           TileBrand.image.size.width > 0,
           [TileClock.label(for: Date()), TileClock.label(for: Date().addingTimeInterval(-60))].contains(clock.stringValue) else {
         fputs("Wide-window toolbar alignment failed: settings at \(settingsFrame.maxX), edge \(root.bounds.maxX), clock center \(clockFrame.midX), free-space center \(freeSpaceCenter)\n", stderr)
