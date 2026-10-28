@@ -16,6 +16,10 @@ Requires an Apple Silicon Mac, macOS 15 or later, and Swift 6.2 or later with th
 
 The script builds `dist/Tile.app` and `dist/Tile-macOS-arm64.zip`. It uses an ad hoc signature for local use; a public distribution needs Developer ID signing and notarization.
 
+## Checks
+
+Run `./scripts/test.sh` for the local app checks. Pull requests run those checks, linting, package validation, and security analysis in GitHub Actions. See [CI and local Codex repair](docs/ci.md) for the jobs, evidence artifacts, and local repair steps.
+
 ## Use
 
 - Click **+** or press `Command-N` to add a terminal. The fifth pane starts another numbered workspace.
