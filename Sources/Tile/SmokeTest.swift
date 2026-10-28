@@ -686,12 +686,13 @@ func runFourPaneLayoutTest() -> Bool {
         return false
     }
     controller.window?.toggleFullScreen(nil)
+    let expectedRestoredFrame = TileWindow.reachableFrame(normalFrame, screens: NSScreen.screens.map(\.visibleFrame))
     guard !controller.isDesktopFullScreen,
-          controller.window?.frame == normalFrame,
+          controller.window?.frame == expectedRestoredFrame,
           controller.window?.styleMask.contains(.titled) == true,
           controller.window?.standardWindowButton(.zoomButton)?.action == #selector(TileWindow.toggleDesktopFullScreen),
           NSApp.presentationOptions == presentationOptions else {
-        fputs("Leaving wallpaper-visible full-screen mode failed: active \(controller.isDesktopFullScreen), frame \(String(describing: controller.window?.frame)), original \(normalFrame), titled \(String(describing: controller.window?.styleMask.contains(.titled))), presentation \(NSApp.presentationOptions)\n", stderr)
+        fputs("Leaving wallpaper-visible full-screen mode failed: active \(controller.isDesktopFullScreen), frame \(String(describing: controller.window?.frame)), original \(normalFrame), expected \(expectedRestoredFrame), titled \(String(describing: controller.window?.styleMask.contains(.titled))), presentation \(NSApp.presentationOptions)\n", stderr)
         return false
     }
     app.showSettings()
