@@ -3,62 +3,109 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#10191c">
-  <meta name="description" content="Tile is a macOS terminal workspace with up to four live terminals in one window.">
-  <title>Tile — Your terminals, together</title>
+  <meta name="theme-color" content="#101415">
+  <meta name="description" content="Tile brings up to four live terminals into one focused macOS workspace. Download the Apple Silicon preview.">
+  <title>Tile — Every terminal. In its place.</title>
   <link rel="icon" type="image/png" href="./logo.png">
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-  <header class="site-header">
-    <a class="brand" href="#top" aria-label="Tile home"><img src="./logo.png" alt=""><span>tile<span class="brand-dot">.</span></span></a>
-    <nav aria-label="Main navigation">
-      <a href="#features">Features</a>
-      <a href="#download">Download</a>
-      <a class="nav-source" href="https://github.com/saiashok0981/tile">GitHub <span aria-hidden="true">↗</span></a>
-    </nav>
+  <header class="site-header" id="top">
+    <div class="header-inner wrap">
+      <a class="wordmark" href="#top" aria-label="Tile, back to top">tile<span>.</span></a>
+      <nav aria-label="Main navigation">
+        <a href="#features">Features</a>
+        <a href="#shortcuts">Shortcuts</a>
+        <a href="#download">Download</a>
+        <a class="github-link" href="https://github.com/saiashok0981/tile">GitHub <span aria-hidden="true">↗</span></a>
+      </nav>
+    </div>
   </header>
 
-  <main id="top">
+  <main>
     <section class="hero wrap" aria-labelledby="hero-title">
       <div class="hero-copy">
-        <p class="eyebrow"><span class="status-dot"></span> A calmer place to work</p>
-        <h1 id="hero-title">Your terminals,<br><em>together.</em></h1>
-        <p class="intro">Tile brings up to four live terminals into one clean macOS workspace. Open a pane, keep your command running, and stay in the flow.</p>
+        <p class="eyebrow">Your terminals, together</p>
+        <h1 id="hero-title">Every terminal.<br><span>In its place.</span></h1>
+        <p class="hero-intro">Run your servers, shells, AI coding agents, and tools in one macOS workspace. Keep the work in view without juggling windows.</p>
         <div class="hero-actions">
-          <a class="button primary" href="#download">Get Tile <span aria-hidden="true">↘</span></a>
-          <a class="button quiet" href="https://github.com/saiashok0981/tile">View source <span aria-hidden="true">↗</span></a>
+          <a class="button button-primary" href="https://github.com/saiashok0981/tile/releases/download/v0.1.0-preview.2/Tile-macOS-arm64.zip">Download for Mac <span aria-hidden="true">↓</span></a>
+          <a class="button button-secondary" href="https://github.com/saiashok0981/tile">View on GitHub <span aria-hidden="true">↗</span></a>
         </div>
-        <p class="hero-meta">Built for macOS 15+ · Apple Silicon · Open source</p>
+        <p class="hero-meta">Preview v0.1.0-preview.2 <span aria-hidden="true">·</span> macOS 15+ <span aria-hidden="true">·</span> Apple Silicon</p>
       </div>
 
-      <div class="preview-wrap">
-        <div class="preview-caption"><span>01 / THE WORKSPACE</span><span>Four panes. One screen.</span></div>
-        <div class="app-preview" role="img" aria-label="Illustration of Tile showing four terminal panes in one window">
-          <div class="app-topbar"><div class="traffic"><i></i><i></i><i></i></div><span class="app-title">tile <b>·</b> workspace 1</span><div class="app-actions"><span>Focus</span><span>+</span><span>⚙</span></div></div>
-          <div class="pane-grid">
-            <div class="pane"><div class="pane-title"><span class="active-dot"></span>dev</div><div class="terminal"><span class="muted">~/project</span><br><span class="prompt">❯</span> npm run dev<br><span class="green">✓</span> ready on localhost:3000</div></div>
-            <div class="pane"><div class="pane-title">api</div><div class="terminal"><span class="muted">~/project/api</span><br><span class="prompt">❯</span> swift run server<br><span class="muted">listening on :8080</span></div></div>
-            <div class="pane"><div class="pane-title"><span class="active-dot"></span>codex</div><div class="terminal"><span class="muted">~/project</span><br><span class="prompt">❯</span> codex<br><span class="green">●</span> working in this pane<span class="cursor"></span></div></div>
-            <div class="pane"><div class="pane-title">notes</div><div class="terminal"><span class="muted">~/project</span><br><span class="prompt">❯</span> git status<br>on branch main<br><span class="muted">working tree clean</span></div></div>
+      <figure class="workspace-figure" aria-label="Illustration of Tile with development, API, Codex, and Git terminal panes">
+        <div class="workspace-window" aria-hidden="true">
+          <div class="window-toolbar">
+            <div class="window-controls"><i></i><i></i><i></i></div>
+            <span class="window-title">Tile <span class="toolbar-divider">/</span> Workspace 1</span>
+            <div class="toolbar-actions"><span>Focus</span><span class="add-pane">+</span></div>
           </div>
+          <div class="terminal-grid">
+            <div class="terminal-pane">
+              <div class="pane-header"><span><i class="pane-signal signal-running"></i> dev</span><span class="pane-index">01</span></div>
+              <div class="terminal-body"><div><span class="term-path">~/tile</span> <span class="term-prompt">❯</span> npm run dev</div><div class="term-muted">Local: http://localhost:3000</div><div><span class="term-success">✓</span> ready in 1.2s</div><div class="term-cursor">▍</div></div>
+            </div>
+            <div class="terminal-pane">
+              <div class="pane-header"><span><i class="pane-signal signal-running"></i> api</span><span class="pane-index">02</span></div>
+              <div class="terminal-body"><div><span class="term-path">~/tile/api</span> <span class="term-prompt">❯</span> swift run server</div><div class="term-muted">Listening on :8080</div><div><span class="term-success">200</span> GET /health <span class="term-muted">18ms</span></div><div><span class="term-success">200</span> GET /projects <span class="term-muted">26ms</span></div></div>
+            </div>
+            <div class="terminal-pane">
+              <div class="pane-header"><span><i class="pane-signal signal-agent"></i> codex</span><span class="pane-index">03</span></div>
+              <div class="terminal-body"><div><span class="term-path">~/tile</span> <span class="term-prompt">❯</span> codex</div><div class="term-muted">Working in this pane</div><div><span class="term-success">›</span> Inspecting workspace</div><div><span class="term-success">›</span> Editing files</div></div>
+            </div>
+            <div class="terminal-pane">
+              <div class="pane-header"><span><i class="pane-signal"></i> git</span><span class="pane-index">04</span></div>
+              <div class="terminal-body"><div><span class="term-path">~/tile</span> <span class="term-prompt">❯</span> git status --short</div><div><span class="term-change"> M</span> Sources/Tile/main.swift</div><div><span class="term-change"> M</span> docs/index.html</div><div class="term-muted">On branch feature/workspace</div></div>
+            </div>
+          </div>
+          <div class="window-status"><span><i class="status-indicator"></i> 4 terminals open</span><span>Workspace 1 of 1</span></div>
         </div>
-        <p class="preview-note">Illustration of the four-pane layout</p>
+        <figcaption>Illustration of a four-pane Tile workspace</figcaption>
+      </figure>
+    </section>
+
+    <section class="benefits section-line" id="features" aria-labelledby="features-title">
+      <div class="wrap">
+        <div class="section-intro"><p class="eyebrow">Built for the way you work</p><h2 id="features-title">One workspace. More room to think.</h2></div>
+        <div class="benefit-grid">
+          <article><span class="benefit-number">01</span><h3>Up to four terminals</h3><p>Keep live shells together in one numbered workspace.</p></article>
+          <article id="shortcuts"><span class="benefit-number">02</span><h3>Keyboard first</h3><p>Add a pane with <kbd>⌘ N</kbd>. Move between panes with <kbd>⌥ ← →</kbd>.</p></article>
+          <article><span class="benefit-number">03</span><h3>Real workflows</h3><p>Run servers, Git, shells, and AI agents side by side.</p></article>
+          <article><span class="benefit-number">04</span><h3>Focus when needed</h3><p>Expand a pane with <kbd>⌘ ⇧ F</kbd>, then return to your split view.</p></article>
+        </div>
       </div>
     </section>
 
-    <section id="features" class="features wrap" aria-labelledby="features-title">
-      <div class="section-heading"><p class="eyebrow">BUILT AROUND YOUR FLOW</p><h2 id="features-title">Less window juggling.<br>More room to think.</h2></div>
-      <div class="feature-list">
-        <article><span class="feature-number">01</span><div><h3>Start with one. Grow to four.</h3><p>Open another terminal with the + button or a shortcut. Tile arranges the panes as you go.</p></div></article>
-        <article><span class="feature-number">02</span><div><h3>Move without stopping.</h3><p>Enable pane dragging in Settings to move a running terminal between panes and windows, including windows on another display.</p></div></article>
-        <article><span class="feature-number">03</span><div><h3>Focus when you need it.</h3><p>Expand a pane to work without distraction, then return to your split workspace.</p></div></article>
+    <section class="workflow wrap" aria-labelledby="workflow-title">
+      <div class="section-intro"><p class="eyebrow">A day in Tile</p><h2 id="workflow-title">Everything you need, right where you need it.</h2><p>Each pane keeps its own process running while you move through the work.</p></div>
+      <ol class="workflow-grid">
+        <li><span class="step-number">01 <span>—</span> DEV</span><h3>Start your server</h3><code><span>❯</span> npm run dev</code></li>
+        <li><span class="step-number">02 <span>—</span> AGENT</span><h3>Run a coding agent</h3><code><span>❯</span> codex</code></li>
+        <li><span class="step-number">03 <span>—</span> GIT</span><h3>Check your changes</h3><code><span>❯</span> git status</code></li>
+        <li><span class="step-number">04 <span>—</span> TOOLS</span><h3>Keep another tool open</h3><code><span>❯</span> tail -f app.log</code></li>
+      </ol>
+    </section>
+
+    <section class="focus-section section-line" aria-labelledby="focus-title">
+      <div class="wrap focus-layout">
+        <div class="focus-copy"><p class="eyebrow">Stay in the work</p><h2 id="focus-title">Give one pane your full attention.</h2><p>Expand the terminal you are using, then return to your four-pane workspace without restarting its process.</p><a class="text-link" href="#download">Get Tile <span aria-hidden="true">↗</span></a></div>
+        <figure class="focus-figure" aria-label="Illustration of one Tile terminal expanded in focus mode">
+          <div class="focus-window" aria-hidden="true"><div class="focus-toolbar"><span>Tile <span class="toolbar-divider">/</span> Focus</span><span>Exit Focus</span></div><div class="focus-terminal"><span class="term-path">~/tile</span> <span class="term-prompt">❯</span> swift build<br><span class="term-muted">Building for debugging...</span><br><span class="term-success">✓</span> Build complete</div></div>
+          <figcaption>Illustration of focus mode</figcaption>
+        </figure>
       </div>
     </section>
 
-    <section id="download" class="download-section"><div class="wrap download-inner"><div><p class="eyebrow">GET TILE</p><h2>Make space for<br>the work that matters.</h2><p>Download the current macOS preview and open Tile to start your first workspace.</p><p class="compatibility">macOS 15 or later · Apple Silicon only · ZIP</p><p class="preview-caveat">This preview is not yet Developer ID signed or notarized, so macOS may block it on first launch.</p></div><div class="download-action"><a class="button primary download-button" href="https://github.com/saiashok0981/tile/releases/download/v0.1.0-preview.2/Tile-macOS-arm64.zip">Download for Mac <span aria-hidden="true">↓</span></a><p>Preview build · v0.1.0-preview.2</p></div></div></section>
+    <section class="download-section section-line" id="download" aria-labelledby="download-title">
+      <div class="wrap download-layout">
+        <div><p class="eyebrow">Download Tile</p><h2 id="download-title">Make room for the work.</h2><p class="download-description">Get the current preview for your Mac. Extract the ZIP and move Tile.app to Applications.</p><p class="compatibility">macOS 15 or later <span aria-hidden="true">·</span> Apple Silicon only <span aria-hidden="true">·</span> Preview v0.1.0-preview.2</p><p class="release-caveat">This preview is not Developer ID signed or notarized. macOS may block it on first launch. See the <a href="https://github.com/saiashok0981/tile/releases/tag/v0.1.0-preview.2">release notes and install instructions</a>.</p></div>
+        <div class="download-actions"><a class="button button-primary" href="https://github.com/saiashok0981/tile/releases/download/v0.1.0-preview.2/Tile-macOS-arm64.zip">Download for Mac <span aria-hidden="true">↓</span></a><a class="text-link" href="https://github.com/saiashok0981/tile">View source on GitHub <span aria-hidden="true">↗</span></a></div>
+      </div>
+    </section>
   </main>
 
-  <footer class="site-footer wrap"><span class="footer-brand">tile<span class="brand-dot">.</span></span><span>Terminal workspace for macOS</span><a href="https://github.com/saiashok0981/tile">Source on GitHub ↗</a></footer>
+  <footer class="site-footer"><div class="wrap footer-inner"><span class="footer-name">tile.</span><span>Terminal workspace for macOS</span><a href="https://github.com/saiashok0981/tile">Source code on GitHub <span aria-hidden="true">↗</span></a></div></footer>
 </body>
 </html>
