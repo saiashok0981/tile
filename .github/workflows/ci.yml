@@ -1,0 +1,159 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swiftlint:
+    name: Swift lint
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install verified SwiftLint 0.65.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            https://github.com/realm/SwiftLint/releases/download/0.65.1/portable_swiftlint.zip \
+            --output "$RUNNER_TEMP/swiftlint.zip"
+          printf '%s  %s\n' \
+            'c1e429b0599cf1b516f369a2d9ec04eaf0e436f3c12b637df8851fa52ff694d0' \
+            "$RUNNER_TEMP/swiftlint.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/swiftlint.zip" -d "$RUNNER_TEMP/swiftlint"
+          chmod +x "$RUNNER_TEMP/swiftlint/swiftlint"
+      - name: Lint Swift sources
+        run: |
+          "$RUNNER_TEMP/swiftlint/swiftlint" lint --strict --config .swiftlint.yml
+
+  workflow-lint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: raven-actions/actionlint@v2.2.0
+
+  app-checks:
+    name: macOS app checks
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.3'
+      - name: Record toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: Build and run local app checks
+        shell: bash
+        env:
+          TILE_SKIP_MANAGED_CODEX: '1'
+          FEATURE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -o pipefail
+          mkdir -p ci-evidence
+          printf '%s\n' "$FEATURE_HEAD_SHA" > ci-evidence/head-sha.txt
+          ./scripts/test.sh 2>&1 | tee ci-evidence/test.log
+      - name: Capture screen after failure
+        if: failure()
+        run: screencapture -x ci-evidence/failure.png || true
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-test-evidence
+          path: ci-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+
+  package:
+    name: Package app
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.3'
+      - name: Build and inspect app archive
+        run: |
+          ./scripts/build-app.sh
+          plutil -lint dist/Tile.app/Contents/Info.plist
+          codesign --verify --deep --strict dist/Tile.app
+          unzip -t -q dist/Tile-macOS-arm64.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tile-app-preview
+          path: dist/Tile-macOS-arm64.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  codeql-swift:
+    name: CodeQL Swift
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26.3'
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: swift
+          build-mode: manual
+          queries: security-extended
+      - name: Build for CodeQL
+        run: swift build --arch arm64
+      - uses: github/codeql-action/analyze@v4
+
+  codeql-workflows:
+    name: CodeQL workflows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: actions
+          queries: security-extended
+      - uses: github/codeql-action/analyze@v4
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: high

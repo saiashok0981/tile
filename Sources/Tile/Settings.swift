@@ -1,4 +1,5 @@
 import AppKit
+import UserNotifications
 
 enum PaneLayout {
     static var gap: CGFloat {
@@ -45,6 +46,7 @@ enum TileAction: String, CaseIterable {
     case focusLeft, focusRight, focusUp, focusDown
     case swapLeft, swapRight, swapUp, swapDown
     case moveToNextWorkspace, raiseWindow
+    case nextAgentAttention, returnToPreviousPane
     case workspace1, workspace2, workspace3, workspace4, workspace5
     case workspace6, workspace7, workspace8, workspace9
 
@@ -70,6 +72,8 @@ enum TileAction: String, CaseIterable {
         case .swapDown: "Swap down"
         case .moveToNextWorkspace: "Move pane to next workspace"
         case .raiseWindow: "Show Tile from another app"
+        case .nextAgentAttention: "Next agent needing attention"
+        case .returnToPreviousPane: "Return to previous pane"
         case .workspace1: "Workspace 1"
         case .workspace2: "Workspace 2"
         case .workspace3: "Workspace 3"
@@ -103,6 +107,8 @@ enum TileAction: String, CaseIterable {
         case .swapDown: "cmd+ctrl+shift+down"
         case .moveToNextWorkspace: "cmd+ctrl+shift+return"
         case .raiseWindow: "cmd+option+space"
+        case .nextAgentAttention: "cmd+option+a"
+        case .returnToPreviousPane: "cmd+option+shift+a"
         case .workspace1: "cmd+1"
         case .workspace2: "cmd+2"
         case .workspace3: "cmd+3"
@@ -177,6 +183,17 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate {
     private let cornerSlider = NSSlider()
     private let cornerValue = NSTextField(labelWithString: "")
     private let shellPath = NSTextField()
+    private let claudeAgentCheck = NSButton(checkboxWithTitle: "Monitor Claude Code", target: nil, action: nil)
+    private let codexAgentCheck = NSButton(checkboxWithTitle: "Monitor Codex", target: nil, action: nil)
+    private let geminiAgentCheck = NSButton(checkboxWithTitle: "Monitor Gemini CLI", target: nil, action: nil)
+    private let notificationChecks: [(String, String)] = [
+        ("notifyAgentActivity", "Quiet update when an agent starts"),
+        ("notifyAgentApproval", "Notify for approval"),
+        ("notifyAgentQuestion", "Notify for question"),
+        ("notifyAgentFailure", "Notify for failure"),
+        ("notifyAgentCompletion", "Notify for completed turn")
+    ]
+    private var notificationButtons: [String: NSButton] = [:]
     private var shortcutFields: [TileAction: NSTextField] = [:]
     var onSave: (() -> Void)?
     var onCornerPreview: ((CGFloat) -> Void)?
@@ -192,7 +209,7 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate {
         root.hasVerticalScroller = true
         root.autoresizingMask = [.width, .height]
         window.contentView = root
-        let formHeight = max(CGFloat(1200), CGFloat(TileAction.allCases.count * 31 + 430))
+        let formHeight = max(CGFloat(1450), CGFloat(TileAction.allCases.count * 31 + 680))
         let form = NSView(frame: NSRect(x: 0, y: 0, width: 510, height: formHeight))
         root.documentView = form
         var y: CGFloat = formHeight - 38
@@ -249,7 +266,29 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate {
         shellPath.frame = NSRect(x: 270, y: y, width: 210, height: 23)
         shellPath.stringValue = UserDefaults.standard.string(forKey: "shellPath") ?? (ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh")
         form.addSubview(shellPath)
-        y -= 42
+        y -= 38
+        label("Agent monitoring (new CLI sessions)", width: 470)
+        y -= 28
+        for (provider, check) in [(AgentProvider.claude, claudeAgentCheck), (.codex, codexAgentCheck), (.gemini, geminiAgentCheck)] {
+            check.frame = NSRect(x: 20, y: y, width: 300, height: 22)
+            check.state = AgentIntegrations.isEnabled(provider) ? .on : .off
+            form.addSubview(check)
+            y -= 27
+        }
+        label("Codex also requires reviewing Tile hooks with /hooks in Codex.", width: 470)
+        y -= 26
+        y -= 8
+        label("Agent notifications", width: 470)
+        y -= 28
+        for (key, name) in notificationChecks {
+            let check = NSButton(checkboxWithTitle: name, target: nil, action: nil)
+            check.frame = NSRect(x: 20, y: y, width: 300, height: 22)
+            check.state = UserDefaults.standard.bool(forKey: key) ? .on : .off
+            form.addSubview(check)
+            notificationButtons[key] = check
+            y -= 27
+        }
+        y -= 15
         label("Keyboard shortcuts (cmd, ctrl, option, shift)", width: 470)
         y -= 30
         for action in TileAction.allCases {
@@ -292,7 +331,18 @@ final class SettingsWindow: NSWindowController, NSWindowDelegate {
         guard let size = Int(fontSize.stringValue), (9...36).contains(size) else { showError("Font size must be 9–36."); return }
         guard let gap = Int(paneGap.stringValue), (0...24).contains(gap) else { showError("Terminal gap must be 0–24 points."); return }
         guard FileManager.default.isExecutableFile(atPath: shellPath.stringValue) else { showError("Shell path must be executable."); return }
+        for (provider, check) in [(AgentProvider.claude, claudeAgentCheck), (.codex, codexAgentCheck), (.gemini, geminiAgentCheck)] {
+            let wanted = check.state == .on
+            guard wanted != AgentIntegrations.isEnabled(provider) else { continue }
+            do { try AgentIntegrations.setEnabled(wanted, for: provider) }
+            catch { showError(error.localizedDescription); return }
+        }
         let defaults = UserDefaults.standard
+        for (key, _) in notificationChecks { defaults.set(notificationButtons[key]?.state == .on, forKey: key) }
+        if Bundle.main.bundleURL.pathExtension == "app",
+           notificationChecks.contains(where: { notificationButtons[$0.0]?.state == .on }) {
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        }
         defaults.set(dragCheck.state == .on, forKey: "dragEnabled")
         defaults.set(titlesCheck.state == .on, forKey: "showPaneTitles")
         defaults.set(size, forKey: "fontSize")

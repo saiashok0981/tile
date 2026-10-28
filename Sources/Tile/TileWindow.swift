@@ -169,6 +169,7 @@ final class PaneView: NSView {
     let session: TerminalSession
     let header: PaneHeader
     private let title = NSTextField(labelWithString: "")
+    private let agentStatus = NSTextField(labelWithString: "")
     private let inputFocusIndicator = NSTextField(labelWithString: "▸")
     private let renameButton = NSButton(title: "✎", target: nil, action: nil)
     private let close = NSButton(title: "×", target: nil, action: nil)
@@ -185,6 +186,9 @@ final class PaneView: NSView {
         title.stringValue = session.displayTitle
         title.textColor = TerminalTheme.current.foreground
         title.lineBreakMode = .byTruncatingTail
+        agentStatus.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        agentStatus.alignment = .right
+        agentStatus.lineBreakMode = .byTruncatingTail
         inputFocusIndicator.identifier = NSUserInterfaceItemIdentifier("tile.inputFocusIndicator")
         inputFocusIndicator.textColor = .systemBlue
         inputFocusIndicator.font = NSFont.systemFont(ofSize: 14, weight: .bold)
@@ -205,11 +209,13 @@ final class PaneView: NSView {
         header.onRename = { [weak self] in self?.onRename?() }
         header.addSubview(inputFocusIndicator)
         header.addSubview(title)
+        header.addSubview(agentStatus)
         header.addSubview(renameButton)
         header.addSubview(close)
         addSubview(session.view)
         session.onChange = { [weak self] in self?.title.stringValue = session.displayTitle }
         updateActivity()
+        updateAgentStatus(owner.agentMonitor.snapshot(for: session.id))
         activityTimer = Timer.scheduledTimer(timeInterval: 1.5, target: self, selector: #selector(refreshActivity), userInfo: nil, repeats: true)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
@@ -223,7 +229,8 @@ final class PaneView: NSView {
         header.frame = NSRect(x: 0, y: bounds.height - headerHeight, width: bounds.width, height: headerHeight)
         title.isHidden = UserDefaults.standard.object(forKey: "showPaneTitles") as? Bool == false
         inputFocusIndicator.frame = NSRect(x: 6, y: 4, width: 12, height: 20)
-        title.frame = NSRect(x: 20, y: 4, width: max(0, bounds.width - 90), height: 20)
+        title.frame = NSRect(x: 20, y: 4, width: max(0, bounds.width - 185), height: 20)
+        agentStatus.frame = NSRect(x: max(0, bounds.width - 157), y: 4, width: 92, height: 20)
         renameButton.frame = NSRect(x: max(0, bounds.width - 60), y: 3, width: 26, height: 22)
         close.frame = NSRect(x: max(0, bounds.width - 30), y: 3, width: 26, height: 22)
         session.view.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - headerHeight))
@@ -231,7 +238,10 @@ final class PaneView: NSView {
     }
     @objc private func closePane() { onClose?() }
     @objc private func renamePane() { onRename?() }
-    @objc private func refreshActivity() { updateActivity() }
+    @objc private func refreshActivity() {
+        updateActivity()
+        updateAgentStatus(header.owner?.agentMonitor.snapshot(for: session.id))
+    }
     func applyCornerRadius(_ radius: CGFloat) {
         layer?.cornerRadius = radius
         layer?.masksToBounds = radius > 0
@@ -247,6 +257,15 @@ final class PaneView: NSView {
         let running = session.hasRunningCommand
         layer?.borderWidth = running ? 2 : 0
         layer?.borderColor = running ? NSColor.systemGreen.cgColor : nil
+    }
+    func updateAgentStatus(_ snapshot: AgentSnapshot?) {
+        guard let snapshot else { agentStatus.stringValue = ""; agentStatus.isHidden = true; return }
+        agentStatus.isHidden = false
+        agentStatus.stringValue = "\(snapshot.provider.rawValue): \(snapshot.phase.label)"
+        agentStatus.textColor = snapshot.phase.priority == nil ? .secondaryLabelColor : .systemOrange
+        let detail = "\(snapshot.provider.rawValue), \(snapshot.phase.label), from \(snapshot.source), last seen \(snapshot.observedAt.formatted())"
+        agentStatus.toolTip = detail
+        agentStatus.setAccessibilityLabel(detail)
     }
 }
 
@@ -293,6 +312,8 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
     private let focus = NSButton(title: "Focus", target: nil, action: nil)
     private let exitFullScreen = NSButton(title: "Exit Full Screen", target: nil, action: nil)
     private let settings = NSButton(title: "⚙", target: nil, action: nil)
+    private let agentButton = NSButton(title: "Agents 0", target: nil, action: nil)
+    private let managedCodexButton = NSButton(title: "Codex", target: nil, action: nil)
     private var toolbarTopConstraint: NSLayoutConstraint?
     private var normalFrame: NSRect?
     private var normalStyleMask: NSWindow.StyleMask?
@@ -345,6 +366,18 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         toolbarTrailingSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         toolbarTrailingSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         toolbar.addArrangedSubview(toolbarTrailingSpacer)
+        agentButton.target = self
+        agentButton.identifier = NSUserInterfaceItemIdentifier("tile.agentOverview")
+        agentButton.action = #selector(openAgentOverview)
+        agentButton.bezelStyle = .rounded
+        agentButton.setAccessibilityLabel("Agent overview")
+        toolbar.addArrangedSubview(agentButton)
+        managedCodexButton.target = self
+        managedCodexButton.action = #selector(openManagedCodex)
+        managedCodexButton.bezelStyle = .rounded
+        managedCodexButton.toolTip = "Open a managed Codex session for the selected pane"
+        managedCodexButton.setAccessibilityLabel("Open managed Codex session")
+        toolbar.addArrangedSubview(managedCodexButton)
         toolbarSpacer.widthAnchor.constraint(equalTo: toolbarTrailingSpacer.widthAnchor).isActive = true
         updateClock()
         clockTimer = Timer.scheduledTimer(timeInterval: 15, target: self, selector: #selector(updateClock), userInfo: nil, repeats: true)
@@ -531,6 +564,90 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         ])
         window?.title = "Tile — Workspace \(selectedWorkspace + 1)"
         updateInputFocusCue()
+        refreshAgentUI()
+    }
+    func refreshAgentUI() {
+        guard let monitor = app?.agentMonitor else { return }
+        let all = workspace.panes.compactMap { monitor.snapshot(for: $0.id) }
+        let attention = monitor.attention(in: workspace.panes)
+        agentButton.title = "Agents \(all.count) · \(attention.count)"
+        agentButton.setAccessibilityLabel("\(all.count) agents, \(attention.count) need attention in workspace \(selectedWorkspace + 1)")
+        paneViews.forEach { $0.updateAgentStatus(monitor.snapshot(for: $0.session.id)) }
+    }
+    @objc private func openAgentOverview() {
+        guard let monitor = app?.agentMonitor else { return }
+        let menu = NSMenu(title: "Agents in Workspace \(selectedWorkspace + 1)")
+        let sessions = workspace.panes.compactMap { session -> (TerminalSession, AgentSnapshot)? in
+            guard let snapshot = monitor.snapshot(for: session.id) else { return nil }
+            return (session, snapshot)
+        }
+        if sessions.isEmpty { menu.addItem(withTitle: "No linked agents", action: nil, keyEquivalent: "") }
+        for (session, item) in sessions {
+            let row = NSMenuItem(title: "\(item.provider.rawValue) · \(session.displayTitle) · \(item.phase.label) · \(item.observedAt.formatted(date: .omitted, time: .shortened))", action: #selector(jumpToAgent(_:)), keyEquivalent: "")
+            row.target = self
+            row.representedObject = session.id.uuidString
+            row.toolTip = item.source
+            menu.addItem(row)
+            if let usage = item.usage {
+                let fresh = Date().timeIntervalSince(usage.sampledAt) <= 120
+                let cost = fresh ? usage.estimatedSessionCostUSD.map { String(format: "est. session $%.2f", $0) } ?? "Cost unavailable" : "Cost stale"
+                func quota(_ name: String, _ value: AgentQuotaWindow?) -> String {
+                    guard fresh, let value else { return "\(name) unavailable" }
+                    let duration = value.durationMinutes.map { " \($0)m" } ?? ""
+                    return "\(name)\(duration) \(Int(value.usedPercent))% used, resets \(value.resetsAt.formatted(date: .abbreviated, time: .shortened))"
+                }
+                let detail: String
+                if item.provider == .codex {
+                    let tokens = fresh ? usage.threadTotalTokens.map { "Thread total \($0) tokens" } ?? "Thread tokens unavailable" : "Thread tokens stale"
+                    let plan = usage.accountPlan.map { "Account \($0)" } ?? "Account plan unavailable"
+                    detail = "\(tokens) · \(plan) · \(quota("Account primary", usage.codexPrimary)) · \(quota("Account secondary", usage.codexSecondary))"
+                } else { detail = "\(cost) · \(quota("5h", usage.fiveHour)) · \(quota("7d", usage.sevenDay))" }
+                let metric = NSMenuItem(title: detail, action: nil, keyEquivalent: "")
+                metric.toolTip = "\(item.provider == .codex ? "Codex app server" : "Claude Code status line"), sampled \(usage.sampledAt.formatted())"
+                menu.addItem(metric)
+            } else {
+                let metric = NSMenuItem(title: "Usage unavailable · Quota unavailable", action: nil, keyEquivalent: "")
+                metric.toolTip = "No supported fresh usage source for this session"
+                menu.addItem(metric)
+            }
+        }
+        let pending = monitor.attention(in: workspace.panes)
+        if !pending.isEmpty {
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "Needs attention", action: nil, keyEquivalent: "")
+            for item in pending {
+                let paneTitle = workspace.panes.first(where: { $0.id == item.paneID })?.displayTitle ?? "Terminal"
+                let stale = Date().timeIntervalSince(item.observedAt) > 120 ? " (last reported)" : ""
+                let row = NSMenuItem(title: "\(item.phase.label)\(stale) · \(item.provider.rawValue) · \(paneTitle)", action: nil, keyEquivalent: "")
+                row.toolTip = "\(item.source), last seen \(item.observedAt.formatted())"
+                let actions = NSMenu()
+                let jump = NSMenuItem(title: "Jump to terminal", action: #selector(jumpToAgent(_:)), keyEquivalent: "")
+                jump.target = self
+                jump.representedObject = item.paneID.uuidString
+                actions.addItem(jump)
+                let dismiss = NSMenuItem(title: item.phase == .completedNeedsReview ? "Mark reviewed" : "Dismiss action", action: #selector(dismissAgentAction(_:)), keyEquivalent: "")
+                dismiss.target = self
+                dismiss.representedObject = item
+                actions.addItem(dismiss)
+                row.submenu = actions
+                menu.addItem(row)
+            }
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: agentButton.bounds.height), in: agentButton)
+    }
+    @objc private func openManagedCodex() {
+        guard let session = currentSession else { return }
+        app?.showManagedCodex(for: session)
+    }
+    @objc private func jumpToAgent(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let paneID = UUID(uuidString: id),
+              let session = app?.windows.flatMap(\.allSessions).first(where: { $0.id == paneID }) else { return }
+        app?.select(session)
+    }
+    @objc private func dismissAgentAction(_ sender: NSMenuItem) {
+        guard let item = sender.representedObject as? AgentSnapshot else { return }
+        app?.agentMonitor.dismiss(item)
     }
     private func updateInputFocusCue() {
         let responder = window?.isKeyWindow == true ? window?.firstResponder : nil
@@ -694,7 +811,10 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
         workspacePicker.isHidden = !compact
     }
     @objc private func openSettings() { app?.showSettings() }
-    @objc private func updateClock() { clockLabel.stringValue = TileClock.label(for: Date()) }
+    @objc private func updateClock() {
+        clockLabel.stringValue = TileClock.label(for: Date())
+        refreshAgentUI()
+    }
     @objc private func selectTab(_ sender: NSButton) { selectWorkspace(sender.tag) }
     @objc private func selectWorkspaceFromPicker(_ sender: NSPopUpButton) { selectWorkspace(sender.indexOfSelectedItem) }
     func windowDidResize(_ notification: Notification) { updateCompactToolbar() }

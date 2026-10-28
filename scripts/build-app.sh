@@ -33,7 +33,7 @@ cat > "${app_dir}/Contents/Info.plist" <<'PLIST'
   <key>CFBundleIconFile</key><string>Tile.icns</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleVersion</key><string>3</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>

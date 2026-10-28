@@ -1,0 +1,12 @@
+included:
+  - Sources
+  - scripts
+
+only_rules:
+  - force_cast
+  - force_try
+  - trailing_whitespace
+  - vertical_whitespace
+
+trailing_whitespace:
+  ignores_empty_lines: true

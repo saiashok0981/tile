@@ -16,6 +16,10 @@ Requires an Apple Silicon Mac, macOS 15 or later, and Swift 6.2 or later with th
 
 The script builds `dist/Tile.app` and `dist/Tile-macOS-arm64.zip`. It uses an ad hoc signature for local use; a public distribution needs Developer ID signing and notarization.
 
+## Checks
+
+Run `./scripts/test.sh` for the local app checks. Pull requests run those checks, linting, package validation, and security analysis in GitHub Actions. See [CI and local Codex repair](docs/ci.md) for the jobs, evidence artifacts, and local repair steps.
+
 ## Use
 
 - Click **+** or press `Command-N` to add a terminal. The fifth pane starts another numbered workspace.
@@ -24,7 +28,13 @@ The script builds `dist/Tile.app` and `dist/Tile-macOS-arm64.zip`. It uses an ad
 - Dragging starts off on new installations. Select **Enable dragging panes** in Settings to rearrange panes by their headers or move a live terminal between windows. Keyboard navigation and pane actions work with dragging off.
 - Click the pencil in a pane header, double-click the header, or press `Command-Shift-R` to name the selected terminal. An empty name restores the terminal-provided title. Names are restored after relaunch.
 - Press `Command-Shift-Return` to return input to the selected terminal, or `Command-Shift-W` to close it. A running command still requires confirmation. `Command-Shift-T` reopens the most recently closed pane with a fresh shell, its name, and its directory. Open **Help → Keyboard Shortcuts** for the current bindings.
-- A green border marks a pane while a command is running. This includes AI agents and other foreground commands; it does not attempt to identify the type of command.
+- A green border marks any running foreground command. If you opt into agent monitoring, a separate pane badge reports Claude Code, Codex, or Gemini CLI status from linked provider events. **Unknown** means Tile has no fresh, reliable status.
+- In **⚙ → Agent monitoring**, enable each CLI integration separately. Tile adds only its own hooks to your user settings and saves a backup before changing them. New CLI sessions in Tile panes inherit the link; sessions already running may remain Unknown.
+- Codex requires you to review and trust the new Tile hook definitions with `/hooks` inside Codex. Until then, Codex skips them and Tile cannot link that session. Recheck `/hooks` after Tile updates a hook definition.
+- **Agents** in the toolbar shows agents and actions in the active numbered workspace. Open it to inspect source and last update, jump to the original terminal, or mark a completed turn reviewed. `Command-Option-A` cycles through actions; `Command-Option-Shift-A` returns to the previous live pane. Change either shortcut in Settings.
+- The **Codex** toolbar button opens a separate managed Codex panel for the selected pane. It starts its own app-server session for prompts and approvals; ordinary Codex terminal sessions continue to use hooks. Managed account quota and thread token totals appear when the service provides them.
+- Claude Code quota windows and estimated session cost appear when its status-line feed provides them. Tile forwards any status-line command already configured. Missing or stale metrics read **Unavailable**. Gemini usage and quota remain Unavailable until a reliable machine-readable source is validated.
+- Agent notifications are optional per event in Settings. macOS controls notification permission and Do Not Disturb.
 - Click **Focus** or press `Command-Shift-F` to expand a pane. **Exit Focus** or Escape restores the split layout and terminal input focus.
 - Click the green window button or press `Control-Command-F` to fill the display while staying on the desktop. Transparent pane gaps show the wallpaper or windows behind Tile. Click **Exit Full Screen**, press `Control-Command-F`, or press Escape to restore the window.
 - Open **⚙** to change shortcuts, shell path, font size, the gap between panes, pane-title visibility, drag behavior, and terminal colors. Enable **Transparent gaps between terminals** to see through only the interior spaces between panes; the toolbar and outer margins stay solid. New terminals use the Ocean Blue theme by default; Classic Dark is also available.

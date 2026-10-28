@@ -1,6 +1,314 @@
 import AppKit
 
 @MainActor
+func runAgentWorkflowTest() -> Bool {
+    let manager = FileManager.default
+    let home = manager.temporaryDirectory.appending(path: "tile-agent-test-\(UUID().uuidString)")
+    defer { try? manager.removeItem(at: home) }
+    do {
+        let url = AgentIntegrations.settingsURL(for: .claude, home: home)
+        try manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let original: [String: Any] = [
+            "theme": "dark",
+            "statusLine": ["type": "command", "command": "printf original"],
+            "hooks": ["Stop": [["hooks": [["type": "command", "command": "printf kept"]]]]]
+        ]
+        try JSONSerialization.data(withJSONObject: original).write(to: url)
+        try AgentIntegrations.setEnabled(true, for: .claude, home: home, executable: "/tmp/Tile")
+        guard AgentIntegrations.isEnabled(.claude, home: home) else { return false }
+        try AgentIntegrations.setEnabled(true, for: .claude, home: home, executable: "/tmp/Tile")
+        if var enabled = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any],
+           var statusLine = enabled["statusLine"] as? [String: Any] {
+            statusLine["padding"] = 3
+            enabled["statusLine"] = statusLine
+            try JSONSerialization.data(withJSONObject: enabled).write(to: url)
+        } else { return false }
+        try AgentIntegrations.setEnabled(false, for: .claude, home: home, executable: "/tmp/Tile")
+        let restored = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
+        guard restored?["theme"] as? String == "dark",
+              (restored?["statusLine"] as? [String: Any])?["command"] as? String == "printf original",
+              (restored?["statusLine"] as? [String: Any])?["padding"] as? Int == 3,
+              let hooks = restored?["hooks"] as? [String: Any],
+              let stop = hooks["Stop"] as? [[String: Any]], stop.count == 1 else { return false }
+    } catch {
+        fputs("Agent settings merge failed: \(error)\n", stderr)
+        return false
+    }
+    let session = TerminalSession(directory: manager.homeDirectoryForCurrentUser.path)
+    defer { session.view.terminate() }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    let monitor = AgentMonitor { token in token == session.agentToken ? session : nil }
+    var changes = 0
+    var alerts = 0
+    monitor.onChange = { changes += 1 }
+    monitor.onNewAttention = { _ in alerts += 1 }
+    let approval = AgentWireEvent(version: 1, provider: .claude, sessionID: "session-1",
+                                  paneToken: session.agentToken, event: "approval", actionID: "action-1",
+                                  observedAt: Date(), source: "Claude Code PermissionRequest hook")
+    monitor.ingest(approval)
+    monitor.ingest(approval)
+    guard monitor.snapshot(for: session.id)?.phase == .approvalRequired,
+          monitor.attention(in: [session]).count == 1,
+          changes == 1, alerts == 1 else { return false }
+    let wrong = AgentWireEvent(version: 1, provider: .claude, sessionID: "session-1",
+                               paneToken: UUID(), event: "failure", actionID: "action-2",
+                               observedAt: Date(), source: "test")
+    monitor.ingest(wrong)
+    guard monitor.snapshot(for: session.id)?.phase == .approvalRequired else { return false }
+    let resolved = AgentWireEvent(version: 1, provider: .claude, sessionID: "session-1",
+                                  paneToken: session.agentToken, event: "resolved", actionID: "action-1",
+                                  observedAt: Date(), source: "Claude Code PostToolUse hook")
+    monitor.ingest(resolved)
+    guard monitor.attention(in: [session]).isEmpty else { return false }
+    let completed = AgentWireEvent(version: 1, provider: .claude, sessionID: "session-1",
+                                   paneToken: session.agentToken, event: "completion", actionID: "turn-1",
+                                   observedAt: Date(), source: "Claude Code Stop hook")
+    monitor.ingest(completed)
+    guard monitor.attention(in: [session]).first?.phase == .completedNeedsReview else { return false }
+    if let item = monitor.attention(in: [session]).first { monitor.dismiss(item) }
+    guard monitor.attention(in: [session]).isEmpty else { return false }
+    let nextTurn = AgentWireEvent(version: 1, provider: .claude, sessionID: "session-1",
+                                  paneToken: session.agentToken, event: "start", actionID: nil,
+                                  observedAt: Date(), source: "Claude Code UserPromptSubmit hook")
+    monitor.ingest(nextTurn)
+    let completedNextTurn = AgentWireEvent(version: 1, provider: .claude, sessionID: "session-1",
+                                           paneToken: session.agentToken, event: "completion", actionID: "turn-2",
+                                           observedAt: Date(), source: "Claude Code Stop hook")
+    monitor.ingest(completedNextTurn)
+    guard monitor.attention(in: [session]).count == 1 else { return false }
+    let bridge = AgentBridge()
+    bridge.onEvent = { monitor.ingest($0) }
+    bridge.start()
+    guard let socketPath = AgentBridge.currentPath,
+          let executable = Bundle.main.executablePath else { return false }
+    let statusLine = Process()
+    statusLine.executableURL = URL(fileURLWithPath: executable)
+    statusLine.arguments = ["--agent-statusline", Data("cat".utf8).base64EncodedString()]
+    let statusInput = Pipe()
+    let statusOutput = Pipe()
+    statusLine.standardInput = statusInput
+    statusLine.standardOutput = statusOutput
+    statusLine.standardError = FileHandle.nullDevice
+    do {
+        try statusLine.run()
+        let sample = Data(#"{"session_id":"sample","cost":{"total_cost_usd":0.25}}"#.utf8)
+        statusInput.fileHandleForWriting.write(sample)
+        try? statusInput.fileHandleForWriting.close()
+        let forwarded = statusOutput.fileHandleForReading.readDataToEndOfFile()
+        statusLine.waitUntilExit()
+        guard forwarded == sample else { return false }
+    } catch { return false }
+    func sendHook(_ provider: String, _ event: String, _ payload: String,
+                  socketOverride: String? = nil) -> Bool {
+        let hook = Process()
+        hook.executableURL = URL(fileURLWithPath: executable)
+        hook.arguments = ["--agent-hook", provider, event]
+        var environment = ProcessInfo.processInfo.environment
+        environment["TILE_AGENT_PANE_TOKEN"] = session.agentToken.uuidString
+        environment["TILE_AGENT_SOCKET"] = socketOverride ?? socketPath
+        hook.environment = environment
+        let input = Pipe()
+        hook.standardInput = input
+        hook.standardOutput = FileHandle.nullDevice
+        hook.standardError = FileHandle.nullDevice
+        do {
+            try hook.run()
+            input.fileHandleForWriting.write(Data(payload.utf8))
+            try? input.fileHandleForWriting.close()
+            while hook.isRunning { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        } catch { return false }
+        return hook.terminationStatus == 0
+    }
+    guard sendHook("Claude Code", "PermissionRequest", #"{"session_id":"session-2","tool_use_id":"action-2"}"#),
+          monitor.attention(in: [session]).first?.sessionID == "session-2" else { return false }
+    let alertCount = alerts
+    guard sendHook("Claude Code", "Notification", #"{"session_id":"session-2","notification_type":"permission_prompt"}"#),
+          alerts == alertCount else { return false }
+    let noBridge = "/tmp/tile-agent-missing-\(UUID().uuidString).sock"
+    guard sendHook("Codex", "PermissionRequest", #"{"session_id":"missing-bridge","tool_use_id":"missing"}"#,
+                   socketOverride: noBridge),
+          alerts == alertCount else { return false }
+    let delayedNotification = AgentWireEvent(version: 1, provider: .claude, sessionID: "session-2",
+                                             paneToken: session.agentToken, event: "approval", actionID: nil,
+                                             observedAt: Date().addingTimeInterval(45),
+                                             source: "Claude Code Notification hook")
+    monitor.ingest(delayedNotification)
+    guard alerts == alertCount, monitor.attention(in: [session]).count == 1 else { return false }
+    guard sendHook("Codex", "PermissionRequest", #"{"session_id":"session-3","turn_id":"turn-3","tool_use_id":"tool-3"}"#),
+          monitor.snapshot(for: session.id)?.provider == .codex,
+          monitor.snapshot(for: session.id)?.phase == .approvalRequired else { return false }
+    guard sendHook("Gemini CLI", "Notification", #"{"session_id":"session-4","notification_type":"ToolPermission"}"#),
+          monitor.snapshot(for: session.id)?.provider == .gemini,
+          monitor.snapshot(for: session.id)?.phase == .approvalRequired else { return false }
+    let question = AgentWireEvent(version: 1, provider: .gemini, sessionID: "session-4",
+                                  paneToken: session.agentToken, event: "question", actionID: "question-4",
+                                  observedAt: Date(), source: "fixture")
+    monitor.ingest(question)
+    guard monitor.attention(in: [session]).count == 2 else { return false }
+    let unknownResolution = AgentWireEvent(version: 1, provider: .gemini, sessionID: "session-4",
+                                           paneToken: session.agentToken, event: "resolved", actionID: nil,
+                                           observedAt: Date(), source: "Gemini CLI AfterTool hook")
+    monitor.ingest(unknownResolution)
+    guard monitor.attention(in: [session]).count == 2 else { return false }
+    let stale = AgentWireEvent(version: 1, provider: .gemini, sessionID: "session-5",
+                               paneToken: session.agentToken, event: "approval", actionID: "stale-1",
+                               observedAt: Date().addingTimeInterval(-121), source: "Gemini CLI Notification hook")
+    monitor.ingest(stale)
+    guard monitor.snapshot(for: session.id)?.phase == .unknown,
+          monitor.attention(in: [session]).first?.sessionID == "session-5" else { return false }
+    session.view.terminate()
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    let restored = TerminalSession(directory: session.directory)
+    defer { restored.view.terminate() }
+    let afterRestart = AgentMonitor { token in
+        if token == session.agentToken { return session }
+        if token == restored.agentToken { return restored }
+        return nil
+    }
+    afterRestart.ingest(approval)
+    guard afterRestart.snapshot(for: restored.id) == nil else { return false }
+    let fresh = AgentWireEvent(version: 1, provider: .codex, sessionID: "new-shell",
+                               paneToken: restored.agentToken, event: "start", actionID: nil,
+                               observedAt: Date(), source: "Codex SessionStart hook")
+    afterRestart.ingest(fresh)
+    return afterRestart.snapshot(for: restored.id)?.phase == .running
+}
+
+@MainActor
+func runManagedCodexProtocolTest() -> Bool {
+    let app = TileApp()
+    let session = TerminalSession(directory: FileManager.default.homeDirectoryForCurrentUser.path)
+    defer { session.view.terminate() }
+    let managed = ManagedCodexSession(pane: session, app: app)
+    let deadline = Date().addingTimeInterval(5)
+    while !managed.isConnected && Date() < deadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    }
+    let connected = managed.isConnected
+    managed.close()
+    if !connected { fputs("Managed Codex did not complete the app-server handshake\n", stderr) }
+    return connected
+}
+
+@MainActor
+func runCodexLiveVerification() -> Bool {
+    let manager = FileManager.default
+    let directory = manager.temporaryDirectory.appending(path: "tile-codex-live-\(UUID().uuidString)")
+    do { try manager.createDirectory(at: directory, withIntermediateDirectories: true) }
+    catch { fputs("Cannot create live-test directory: \(error)\n", stderr); return false }
+    defer { try? manager.removeItem(at: directory) }
+
+    let bridge = AgentBridge()
+    bridge.start()
+    guard AgentBridge.currentPath != nil else { fputs("Agent bridge did not start\n", stderr); return false }
+    let app = TileApp()
+    let pane = TerminalSession(directory: directory.path)
+    defer { pane.view.terminate() }
+    let secondPane = TerminalSession(directory: directory.path)
+    defer { secondPane.view.terminate() }
+    let window = TileWindow(workspaces: [Workspace(panes: [pane])], owner: app)
+    app.windows.append(window)
+    window.window?.makeKeyAndOrderFront(nil)
+    let destination = TileWindow(workspaces: [Workspace(panes: [secondPane])], owner: app)
+    app.windows.append(destination)
+    defer { window.close(); destination.close() }
+    var events: [String] = []
+    var eventTokens: [UUID] = []
+    bridge.onEvent = { event in
+        events.append(event.event)
+        eventTokens.append(event.paneToken)
+        app.agentMonitor.ingest(event)
+    }
+
+    let output = directory.appending(path: "codex.jsonl")
+    let errors = directory.appending(path: "codex.stderr")
+    let done = directory.appending(path: "done")
+    let secondOutput = directory.appending(path: "codex-second.jsonl")
+    let secondErrors = directory.appending(path: "codex-second.stderr")
+    let secondDone = directory.appending(path: "second-done")
+    let command = "codex exec -C '\(directory.path)' --skip-git-repo-check --ephemeral --sandbox read-only --dangerously-bypass-hook-trust --json 'Reply exactly READY. Do not use tools.' </dev/null >'\(output.path)' 2>'\(errors.path)'; printf '%s' \"$?\" >'\(done.path)'\n"
+    let secondCommand = "codex exec -C '\(directory.path)' --skip-git-repo-check --ephemeral --sandbox read-only --dangerously-bypass-hook-trust --json 'Reply exactly READY. Do not use tools.' </dev/null >'\(secondOutput.path)' 2>'\(secondErrors.path)'; printf '%s' \"$?\" >'\(secondDone.path)'\n"
+    RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+    let bytes = Array(command.utf8)
+    pane.view.process.send(data: bytes[...])
+    let secondBytes = Array(secondCommand.utf8)
+    secondPane.view.process.send(data: secondBytes[...])
+    let originalPID = pane.view.process.shellPid
+    window.remove(pane)
+    destination.add(pane)
+    guard pane.view.process.shellPid == originalPID,
+          app.window(containing: pane) === destination else { return false }
+    let deadline = Date().addingTimeInterval(90)
+    while (!manager.fileExists(atPath: done.path) || !manager.fileExists(atPath: secondDone.path)) && Date() < deadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+    }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    let status = (try? String(contentsOf: done, encoding: .utf8)) ?? "timed out"
+    let secondStatus = (try? String(contentsOf: secondDone, encoding: .utf8)) ?? "timed out"
+    let outputText = (try? String(contentsOf: output, encoding: .utf8)) ?? ""
+    let secondOutputText = (try? String(contentsOf: secondOutput, encoding: .utf8)) ?? ""
+    let errorText = (try? String(contentsOf: errors, encoding: .utf8)) ?? ""
+    let secondErrorText = (try? String(contentsOf: secondErrors, encoding: .utf8)) ?? ""
+    let turnCompleted = outputText.contains("\"type\":\"turn.completed\"")
+    let secondTurnCompleted = secondOutputText.contains("\"type\":\"turn.completed\"")
+    let snapshot = app.agentMonitor.snapshot(for: pane.id)
+    let secondSnapshot = app.agentMonitor.snapshot(for: secondPane.id)
+    func hookCount(_ name: String, token: UUID) -> Int {
+        zip(events, eventTokens).filter { $0.0 == name && $0.1 == token }.count
+    }
+    print("Codex live panes: exits=\(status),\(secondStatus), turnsCompleted=\(turnCompleted),\(secondTurnCompleted), hooks=\(events), linkedPanes=\(Set(eventTokens).count), movedPanePhase=\(snapshot?.phase.label ?? "none"), secondPanePhase=\(secondSnapshot?.phase.label ?? "none")")
+    if status != "0" { fputs("Codex stderr: \(errorText.prefix(600))\n", stderr) }
+    if secondStatus != "0" { fputs("Second Codex stderr: \(secondErrorText.prefix(600))\n", stderr) }
+    return status == "0" && secondStatus == "0" && turnCompleted && secondTurnCompleted &&
+        snapshot?.provider == .codex && secondSnapshot?.provider == .codex &&
+        snapshot?.sessionID != secondSnapshot?.sessionID &&
+        hookCount("start", token: pane.agentToken) >= 1 &&
+        hookCount("start", token: secondPane.agentToken) >= 1 &&
+        hookCount("completion", token: pane.agentToken) == 1 &&
+        hookCount("completion", token: secondPane.agentToken) == 1 &&
+        hookCount("end", token: pane.agentToken) == 1 &&
+        hookCount("end", token: secondPane.agentToken) == 1
+}
+
+@MainActor
+func runManagedCodexLiveVerification() -> Bool {
+    let directory = FileManager.default.temporaryDirectory.appending(path: "tile-managed-codex-live-\(UUID().uuidString)")
+    do { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+    catch { return false }
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let app = TileApp()
+    let pane = TerminalSession(directory: directory.path)
+    defer { pane.view.terminate() }
+    let window = TileWindow(workspaces: [Workspace(panes: [pane])], owner: app)
+    app.windows.append(window)
+    window.window?.makeKeyAndOrderFront(nil)
+    let managed = ManagedCodexSession(pane: pane, app: app)
+    defer { managed.close(); window.close() }
+    let connectionDeadline = Date().addingTimeInterval(10)
+    while !managed.isConnected && Date() < connectionDeadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    }
+    guard managed.isConnected else { fputs("Managed Codex did not connect\n", stderr); return false }
+    managed.submitPrompt("Reply exactly READY. Do not use tools.")
+    let turnDeadline = Date().addingTimeInterval(60)
+    while Date() < turnDeadline {
+        let snapshot = app.agentMonitor.snapshot(for: pane.id)
+        if snapshot?.phase == .completedNeedsReview { break }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+    }
+    RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+    let snapshot = app.agentMonitor.snapshot(for: pane.id)
+    let usage = snapshot?.usage
+    print("Managed Codex live pane: phase=\(snapshot?.phase.label ?? "none"), threadTokens=\(usage?.threadTotalTokens.map(String.init) ?? "unavailable"), accountPrimary=\(usage?.codexPrimary.map { String(Int($0.usedPercent)) } ?? "unavailable"), accountSecondary=\(usage?.codexSecondary.map { String(Int($0.usedPercent)) } ?? "unavailable"), attention=\(app.agentMonitor.attention(in: [pane]).count)")
+    managed.close()
+    RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+    let ended = app.agentMonitor.snapshot(for: pane.id)?.phase == .idle &&
+        app.agentMonitor.attention(in: [pane]).isEmpty
+    return snapshot?.phase == .completedNeedsReview && usage?.threadTotalTokens != nil && ended
+}
+
+@MainActor
 func viewDescendants(_ view: NSView) -> [NSView] {
     [view] + view.subviews.flatMap(viewDescendants)
 }
@@ -114,6 +422,10 @@ func runKeyboardWorkflowTest() -> Bool {
         }
         controller.selectWorkspace(1)
         app.newWindow()
+        let activationDeadline = Date().addingTimeInterval(2)
+        while app.windows.last?.window?.isKeyWindow != true && Date() < activationDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
         guard let other = app.windows.last, other !== controller,
               let otherWindow = other.window, otherWindow.isKeyWindow else {
             fputs("Second Tile window did not become active\n", stderr)
@@ -258,6 +570,7 @@ func runFourPaneLayoutTest() -> Bool {
           let settings = viewDescendants(root).compactMap({ $0 as? NSButton }).first(where: { $0.title == "⚙" }),
           let brand = viewDescendants(root).compactMap({ $0 as? TileBrandView }).first(where: { $0.identifier?.rawValue == "tile.brand" }),
           let tabs = viewDescendants(root).compactMap({ $0 as? NSStackView }).first(where: { $0.identifier?.rawValue == "tile.workspaceTabs" }),
+          let agents = viewDescendants(root).compactMap({ $0 as? NSButton }).first(where: { $0.identifier?.rawValue == "tile.agentOverview" }),
           let clock = viewDescendants(root).compactMap({ $0 as? NSTextField }).first(where: { $0.identifier?.rawValue == "tile.clock" }) else {
         fputs("Four-pane check: toolbar control or logo is missing\n", stderr)
         return false
@@ -272,13 +585,16 @@ func runFourPaneLayoutTest() -> Bool {
     let settingsFrame = settings.convert(settings.bounds, to: root)
     let brandFrame = brand.convert(brand.bounds, to: root)
     let tabsFrame = tabs.convert(tabs.bounds, to: root)
-    let plusFrame = plus.convert(plus.bounds, to: root)
+    let agentsFrame = agents.convert(agents.bounds, to: root)
     let clockFrame = clock.convert(clock.bounds, to: root)
-    let freeSpaceCenter = (tabsFrame.maxX + plusFrame.minX) / 2
+    let freeSpaceCenter = (tabsFrame.maxX + agentsFrame.minX) / 2
+    // AppKit can place the clock a few points off center across macOS versions.
+    // Keep it within one toolbar spacing of the available area's midpoint.
+    let clockCenterTolerance: CGFloat = 8
     guard settingsFrame.maxX >= root.bounds.maxX - 20,
           brandFrame.width >= 70,
           brandFrame.minX >= 0,
-          abs(clockFrame.midX - freeSpaceCenter) < 2,
+          abs(clockFrame.midX - freeSpaceCenter) <= clockCenterTolerance,
           TileBrand.image.size.width > 0,
           [TileClock.label(for: Date()), TileClock.label(for: Date().addingTimeInterval(-60))].contains(clock.stringValue) else {
         fputs("Wide-window toolbar alignment failed: settings at \(settingsFrame.maxX), edge \(root.bounds.maxX), clock center \(clockFrame.midX), free-space center \(freeSpaceCenter)\n", stderr)
@@ -370,12 +686,13 @@ func runFourPaneLayoutTest() -> Bool {
         return false
     }
     controller.window?.toggleFullScreen(nil)
+    let expectedRestoredFrame = TileWindow.reachableFrame(normalFrame, screens: NSScreen.screens.map(\.visibleFrame))
     guard !controller.isDesktopFullScreen,
-          controller.window?.frame == normalFrame,
+          controller.window?.frame == expectedRestoredFrame,
           controller.window?.styleMask.contains(.titled) == true,
           controller.window?.standardWindowButton(.zoomButton)?.action == #selector(TileWindow.toggleDesktopFullScreen),
           NSApp.presentationOptions == presentationOptions else {
-        fputs("Leaving wallpaper-visible full-screen mode failed: active \(controller.isDesktopFullScreen), frame \(String(describing: controller.window?.frame)), original \(normalFrame), titled \(String(describing: controller.window?.styleMask.contains(.titled))), presentation \(NSApp.presentationOptions)\n", stderr)
+        fputs("Leaving wallpaper-visible full-screen mode failed: active \(controller.isDesktopFullScreen), frame \(String(describing: controller.window?.frame)), original \(normalFrame), expected \(expectedRestoredFrame), titled \(String(describing: controller.window?.styleMask.contains(.titled))), presentation \(NSApp.presentationOptions)\n", stderr)
         return false
     }
     app.showSettings()
