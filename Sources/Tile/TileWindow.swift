@@ -671,11 +671,12 @@ final class TileWindow: NSWindowController, NSWindowDelegate {
             window.hasShadow = normalHasShadow
             toolbarTopConstraint?.constant = 8
             exitFullScreen.isHidden = true
-            window.setFrame(normalFrame, display: true)
+            app?.setDesktopFullScreen(false, for: id)
+            let restoredFrame = Self.reachableFrame(normalFrame, screens: NSScreen.screens.map(\.visibleFrame))
+            window.setFrame(restoredFrame, display: true)
             self.normalFrame = nil
             self.normalStyleMask = nil
             configureZoomButton()
-            app?.setDesktopFullScreen(false, for: id)
         } else {
             guard let screen = window.screen ?? NSScreen.main else { return }
             normalFrame = window.frame
