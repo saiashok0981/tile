@@ -4,7 +4,7 @@ Tile is an open-source macOS terminal workspace. It keeps up to four live shells
 
 Download the current Apple Silicon preview from the [Tile website on GitHub Pages](https://saiashok0981.github.io/tile/). It is not yet Developer ID signed or notarized, so macOS may block it on first launch.
 
-The installable ZIP is also available in the [GitHub preview release](https://github.com/saiashok0981/tile/releases/tag/v0.1.0-preview.2).
+The installable ZIP is also available in the [GitHub preview release](https://github.com/saiashok0981/tile/releases/tag/v0.1.0-preview.3).
 
 ## Build
 
@@ -32,6 +32,7 @@ Run `./scripts/test.sh` for the local app checks. Pull requests run those checks
 - In **⚙ → Agent monitoring**, enable each CLI integration separately. Tile adds only its own hooks to your user settings and saves a backup before changing them. New CLI sessions in Tile panes inherit the link; sessions already running may remain Unknown.
 - Codex requires you to review and trust the new Tile hook definitions with `/hooks` inside Codex. Until then, Codex skips them and Tile cannot link that session. Recheck `/hooks` after Tile updates a hook definition.
 - **Agents** in the toolbar shows agents and actions in the active numbered workspace. Open it to inspect source and last update, jump to the original terminal, or mark a completed turn reviewed. `Command-Option-A` cycles through actions; `Command-Option-Shift-A` returns to the previous live pane. Change either shortcut in Settings.
+- Click the Tile agent status control beside the camera notch to open a live dashboard for linked agents across Tile. It shows status, task, current activity, elapsed time, recent events, and usage when reported. On Macs without a notch, the control appears in the menu bar.
 - The **Codex** toolbar button opens a separate managed Codex panel for the selected pane. It starts its own app-server session for prompts and approvals; ordinary Codex terminal sessions continue to use hooks. Managed account quota and thread token totals appear when the service provides them.
 - Claude Code quota windows and estimated session cost appear when its status-line feed provides them. Tile forwards any status-line command already configured. Missing or stale metrics read **Unavailable**. Gemini usage and quota remain Unavailable until a reliable machine-readable source is validated.
 - Agent notifications are optional per event in Settings. macOS controls notification permission and Do Not Disturb.
