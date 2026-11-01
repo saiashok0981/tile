@@ -2,4 +2,5 @@
 .swiftpm/
 dist/
 to-fix/
+artifact/
 .DS_Store
