@@ -6,7 +6,7 @@ swift run Tile --smoke-test
 print 'Running four-pane layout test'
 swift run Tile --layout-test
 print 'Running input focus test'
-swift run Tile --focus-test
+python3 scripts/run-check-with-timeout.py 90 swift run Tile --focus-test
 print 'Running keyboard workflow test'
 swift run Tile --keyboard-test
 print 'Running agent workflow test'

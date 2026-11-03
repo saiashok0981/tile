@@ -552,11 +552,14 @@ func runKeyboardWorkflowTest() -> Bool {
 
 @MainActor
 func runInputFocusTest() -> Bool {
+    fputs("[DEBUG-focus-ci] Entered focus check\n", stderr)
     let defaults = UserDefaults.standard
     let previousSnapshot = defaults.data(forKey: "workspaceSnapshot")
     defer { defaults.set(previousSnapshot, forKey: "workspaceSnapshot") }
     let app = TileApp()
+    fputs("[DEBUG-focus-ci] Created TileApp\n", stderr)
     app.newWindow()
+    fputs("[DEBUG-focus-ci] Created window\n", stderr)
     let controller = app.windows[0]
     defer {
         controller.allowClose = true
@@ -565,10 +568,12 @@ func runInputFocusTest() -> Bool {
     }
     var passed = false
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+        fputs("[DEBUG-focus-ci] Activating window\n", stderr)
         NSApp.activate(ignoringOtherApps: true)
         controller.window?.makeKeyAndOrderFront(nil)
     }
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        fputs("[DEBUG-focus-ci] Running assertions\n", stderr)
         guard let root = controller.window?.contentView,
               let first = controller.currentSession else { NSApp.stop(nil); return }
         @MainActor func hasFocusCue(_ session: TerminalSession) -> Bool {
@@ -628,7 +633,9 @@ func runInputFocusTest() -> Bool {
         passed = true
         NSApp.stop(nil)
     }
+    fputs("[DEBUG-focus-ci] Entering NSApp.run\n", stderr)
     NSApp.run()
+    fputs("[DEBUG-focus-ci] Returned from NSApp.run\n", stderr)
     if passed { print("Input focus check passed") }
     return passed
 }
