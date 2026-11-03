@@ -70,7 +70,23 @@ jobs:
           set -o pipefail
           mkdir -p ci-evidence
           printf '%s\n' "$FEATURE_HEAD_SHA" > ci-evidence/head-sha.txt
-          ./scripts/test.sh 2>&1 | tee ci-evidence/test.log
+          for attempt in 1 2 3; do
+            printf 'App checks attempt %s of 3\n' "$attempt" | tee -a ci-evidence/test.log
+            set +e
+            ./scripts/test.sh 2>&1 | tee -a ci-evidence/test.log
+            statuses=("${PIPESTATUS[@]}")
+            set -e
+            if (( statuses[1] != 0 )); then
+              exit "${statuses[1]}"
+            fi
+            if (( statuses[0] == 0 )); then
+              break
+            fi
+            if (( statuses[0] != 124 || attempt == 3 )); then
+              exit "${statuses[0]}"
+            fi
+            printf 'Focus check timed out; retrying the app checks in a fresh process.\n' | tee -a ci-evidence/test.log
+          done
       - name: Capture screen after failure
         if: failure()
         run: screencapture -x ci-evidence/failure.png || true

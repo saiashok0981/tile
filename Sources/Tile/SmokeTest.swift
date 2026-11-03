@@ -138,6 +138,10 @@ func runAgentWorkflowTest() -> Bool {
     guard sendHook("Codex", "PermissionRequest", #"{"session_id":"session-3","turn_id":"turn-3","tool_use_id":"tool-3"}"#),
           monitor.snapshot(for: session.id)?.provider == .codex,
           monitor.snapshot(for: session.id)?.phase == .approvalRequired else { return false }
+    guard sendHook("Codex", "UserPromptSubmit", #"{"session_id":"session-3","prompt":"Inspect the build"}"#),
+          monitor.detail(for: session.id)?.task == "Inspect the build",
+          sendHook("Codex", "PostToolUse", #"{"session_id":"session-3","tool_name":"shell_command","tool_call_id":"tool-3"}"#),
+          monitor.detail(for: session.id)?.recent.first?.text == "PostToolUse: shell_command" else { return false }
     guard sendHook("Gemini CLI", "Notification", #"{"session_id":"session-4","notification_type":"ToolPermission"}"#),
           monitor.snapshot(for: session.id)?.provider == .gemini,
           monitor.snapshot(for: session.id)?.phase == .approvalRequired else { return false }
@@ -176,6 +180,74 @@ func runAgentWorkflowTest() -> Bool {
 }
 
 @MainActor
+func runMenuBarAgentTest() -> Bool {
+    let app = TileApp()
+    let session = TerminalSession(directory: FileManager.default.homeDirectoryForCurrentUser.path)
+    defer { session.view.terminate() }
+    let second = TerminalSession(directory: session.directory)
+    defer { second.view.terminate() }
+    let window = TileWindow(workspaces: [Workspace(panes: [session, second])], owner: app)
+    app.windows.append(window)
+    defer { window.close() }
+    app.agentMonitor.onChange = { [weak app] in app?.refreshAgentUI() }
+    app.installMenuBarStatus()
+    guard app.menuBarStatus?.item.button?.title == "Tile" else { return false }
+    if let area = NSScreen.screens.compactMap(\.auxiliaryTopRightArea).first,
+       area.width >= 120, area.height >= 24 {
+        guard let frame = app.menuBarStatus?.notchControlFrame,
+              frame.minX == area.minX + 6,
+              frame.midY == area.midY,
+              app.menuBarStatus?.item.isVisible == false else { return false }
+    } else {
+        guard app.menuBarStatus?.item.isVisible == true else { return false }
+    }
+
+    let idle = AgentWireEvent(version: 1, provider: .codex, sessionID: "menu-bar-test",
+                              paneToken: session.agentToken, event: "idle", actionID: nil,
+                              observedAt: Date(), source: "test")
+    app.agentMonitor.ingest(idle)
+    guard app.menuBarStatus?.item.button?.title == "Codex: Idle" else { return false }
+    let running = AgentWireEvent(version: 1, provider: .codex, sessionID: "menu-bar-test",
+                                 paneToken: session.agentToken, event: "start", actionID: nil,
+                                 observedAt: Date(), source: "test")
+    app.agentMonitor.ingest(running)
+    guard app.menuBarStatus?.item.button?.title == "Codex: Running",
+          app.menuBarStatus?.linkedAgentCount == 1,
+          app.agentMonitor.detail(for: session.id)?.startedAt != nil else { return false }
+    let firstProgress = AgentWireEvent(version: 1, provider: .codex, sessionID: "menu-bar-test",
+                                       paneToken: session.agentToken, event: "progress", actionID: nil,
+                                       observedAt: Date().addingTimeInterval(-10), source: "test")
+    let freshProgress = AgentWireEvent(version: 1, provider: .codex, sessionID: "menu-bar-test",
+                                       paneToken: session.agentToken, event: "progress", actionID: nil,
+                                       observedAt: Date(), source: "test")
+    app.agentMonitor.ingest(firstProgress)
+    app.agentMonitor.ingest(freshProgress)
+    guard app.agentMonitor.snapshot(for: session.id)?.observedAt == freshProgress.observedAt else { return false }
+    app.agentMonitor.recordManagedActivity(session: session, threadID: "menu-bar-test",
+                                           task: "Inspect the repository", action: "Running command: rg Tile")
+    guard app.agentMonitor.detail(for: session.id)?.task == "Inspect the repository",
+          app.agentMonitor.detail(for: session.id)?.recent.first?.text == "Running command: rg Tile" else { return false }
+    app.menuBarStatus?.toggleDashboard()
+    guard app.menuBarStatus?.dashboardIsShown == true else { return false }
+    app.menuBarStatus?.toggleDashboard()
+    let completed = AgentWireEvent(version: 1, provider: .codex, sessionID: "menu-bar-test",
+                                   paneToken: session.agentToken, event: "completion", actionID: nil,
+                                   observedAt: Date(), source: "test")
+    app.agentMonitor.ingest(completed)
+    guard app.menuBarStatus?.item.button?.title == "Codex: Review",
+          app.agentMonitor.detail(for: session.id)?.finishedAt != nil else { return false }
+    let secondStart = AgentWireEvent(version: 1, provider: .claude, sessionID: "second-agent",
+                                     paneToken: second.agentToken, event: "start", actionID: nil,
+                                     observedAt: Date(), source: "test")
+    app.agentMonitor.ingest(secondStart)
+    guard app.menuBarStatus?.item.button?.title == "Claude Code: Running",
+          app.menuBarStatus?.linkedAgentCount == 2 else { return false }
+    app.agentMonitor.remove(paneID: second.id)
+    app.agentMonitor.remove(paneID: session.id)
+    return app.menuBarStatus?.item.button?.title == "Tile"
+}
+
+@MainActor
 func runManagedCodexProtocolTest() -> Bool {
     let app = TileApp()
     let session = TerminalSession(directory: FileManager.default.homeDirectoryForCurrentUser.path)
@@ -186,9 +258,19 @@ func runManagedCodexProtocolTest() -> Bool {
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
     }
     let connected = managed.isConnected
+    let transcript = managed.window?.contentView.map(viewDescendants)?
+        .compactMap { $0 as? NSTextView }.first
+    managed.receive(Data())
+    managed.receive(Data())
+    let disconnectCount = transcript?.string.components(separatedBy: "Codex app server disconnected.").count ?? 0
+    let renderedColor = transcript?.textStorage?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+    let readable = transcript?.textColor == .labelColor &&
+        transcript?.backgroundColor == .textBackgroundColor && renderedColor == .labelColor
     managed.close()
     if !connected { fputs("Managed Codex did not complete the app-server handshake\n", stderr) }
-    return connected
+    if disconnectCount != 2 { fputs("Managed Codex repeated its disconnect message\n", stderr) }
+    if !readable { fputs("Managed Codex transcript colors are not appearance-aware\n", stderr) }
+    return connected && disconnectCount == 2 && readable
 }
 
 @MainActor
@@ -283,6 +365,12 @@ func runManagedCodexLiveVerification() -> Bool {
     let window = TileWindow(workspaces: [Workspace(panes: [pane])], owner: app)
     app.windows.append(window)
     window.window?.makeKeyAndOrderFront(nil)
+    app.installMenuBarStatus()
+    var observedRunningInMenuBar = false
+    app.agentMonitor.onChange = { [weak app] in
+        app?.refreshAgentUI()
+        if app?.menuBarStatus?.item.button?.title == "Codex: Running" { observedRunningInMenuBar = true }
+    }
     let managed = ManagedCodexSession(pane: pane, app: app)
     defer { managed.close(); window.close() }
     let connectionDeadline = Date().addingTimeInterval(10)
@@ -290,7 +378,8 @@ func runManagedCodexLiveVerification() -> Bool {
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
     }
     guard managed.isConnected else { fputs("Managed Codex did not connect\n", stderr); return false }
-    managed.submitPrompt("Reply exactly READY. Do not use tools.")
+    let task = "Reply exactly READY. Do not use tools."
+    managed.submitPrompt(task)
     let turnDeadline = Date().addingTimeInterval(60)
     while Date() < turnDeadline {
         let snapshot = app.agentMonitor.snapshot(for: pane.id)
@@ -300,12 +389,16 @@ func runManagedCodexLiveVerification() -> Bool {
     RunLoop.main.run(until: Date().addingTimeInterval(0.5))
     let snapshot = app.agentMonitor.snapshot(for: pane.id)
     let usage = snapshot?.usage
+    let detail = app.agentMonitor.detail(for: pane.id)
     print("Managed Codex live pane: phase=\(snapshot?.phase.label ?? "none"), threadTokens=\(usage?.threadTotalTokens.map(String.init) ?? "unavailable"), accountPrimary=\(usage?.codexPrimary.map { String(Int($0.usedPercent)) } ?? "unavailable"), accountSecondary=\(usage?.codexSecondary.map { String(Int($0.usedPercent)) } ?? "unavailable"), attention=\(app.agentMonitor.attention(in: [pane]).count)")
     managed.close()
     RunLoop.main.run(until: Date().addingTimeInterval(0.1))
     let ended = app.agentMonitor.snapshot(for: pane.id)?.phase == .idle &&
         app.agentMonitor.attention(in: [pane]).isEmpty
-    return snapshot?.phase == .completedNeedsReview && usage?.threadTotalTokens != nil && ended
+    return snapshot?.phase == .completedNeedsReview && usage?.threadTotalTokens != nil &&
+        detail?.task == task && detail?.startedAt != nil && detail?.finishedAt != nil &&
+        detail?.recent.contains(where: { $0.text.contains("Codex: READY") }) == true &&
+        observedRunningInMenuBar && ended
 }
 
 @MainActor

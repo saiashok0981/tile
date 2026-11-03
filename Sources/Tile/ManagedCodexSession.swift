@@ -23,6 +23,7 @@ final class ManagedCodexSession: NSWindowController, NSWindowDelegate {
     private var quotaObservedAt: Date?
     private var plan: String?
     private var ended = false
+    private var runningTimer: Timer?
     var isConnected: Bool { threadID != nil }
 
     init(pane: TerminalSession, app: TileApp) {
@@ -37,9 +38,12 @@ final class ManagedCodexSession: NSWindowController, NSWindowDelegate {
         window.contentView = root
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
+        scroll.backgroundColor = .textBackgroundColor
         scroll.documentView = transcript
         transcript.isEditable = false
         transcript.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        transcript.textColor = .labelColor
+        transcript.backgroundColor = .textBackgroundColor
         prompt.placeholderString = "Ask Codex in this directory"
         prompt.target = self
         prompt.action = #selector(sendPrompt)
@@ -74,13 +78,19 @@ final class ManagedCodexSession: NSWindowController, NSWindowDelegate {
     required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
 
     private func append(_ value: String) {
-        transcript.textStorage?.append(NSAttributedString(string: value))
+        transcript.textStorage?.append(NSAttributedString(string: value, attributes: [
+            .foregroundColor: NSColor.labelColor
+        ]))
         transcript.scrollToEndOfDocument(nil)
     }
 
     private func start() {
         let searchPaths = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map(String.init)
-        guard let executable = (searchPaths + ["/usr/local/bin", "/opt/homebrew/bin"])
+        var executablePaths = searchPaths
+        for directory in ["/usr/local/bin", "/opt/homebrew/bin"] where !executablePaths.contains(directory) {
+            executablePaths.append(directory)
+        }
+        guard let executable = executablePaths
             .map({ URL(fileURLWithPath: $0).appending(path: "codex").path })
             .first(where: FileManager.default.isExecutableFile(atPath:)) else {
             append("Codex CLI is unavailable. Install it before starting a managed session.\n")
@@ -89,6 +99,9 @@ final class ManagedCodexSession: NSWindowController, NSWindowDelegate {
         }
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = ["app-server", "--stdio"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["PATH"] = executablePaths.joined(separator: ":")
+        process.environment = environment
         process.standardInput = inputPipe
         process.standardOutput = outputPipe
         process.standardError = FileHandle.nullDevice
@@ -125,6 +138,7 @@ final class ManagedCodexSession: NSWindowController, NSWindowDelegate {
         guard !text.isEmpty else { return }
         prompt.stringValue = ""
         append("\nYou: \(text)\nCodex: ")
+        app?.agentMonitor.recordManagedActivity(session: pane, threadID: threadID, task: text)
         request("turn/start", params: ["threadId": threadID, "input": [["type": "text", "text": text]], "cwd": pane.directory])
     }
 
@@ -133,9 +147,10 @@ final class ManagedCodexSession: NSWindowController, NSWindowDelegate {
         sendPrompt()
     }
 
-    private func receive(_ data: Data) {
+    func receive(_ data: Data) {
         if data.isEmpty {
             outputPipe.fileHandleForReading.readabilityHandler = nil
+            guard !ended else { return }
             append("\nCodex app server disconnected.\n")
             sendButton.isEnabled = false
             endSession()
@@ -168,7 +183,7 @@ final class ManagedCodexSession: NSWindowController, NSWindowDelegate {
             threadID = id
             append("Connected. Session \(id).\n")
             send(["method": "account/rateLimits/read", "id": 3])
-            emit("start")
+            emit("idle")
             return
         }
         if message["id"] as? Int == 3,
@@ -180,8 +195,15 @@ final class ManagedCodexSession: NSWindowController, NSWindowDelegate {
               let params = message["params"] as? [String: Any] else { return }
         if let threadID, let incoming = params["threadId"] as? String, incoming != threadID { return }
         switch method {
-        case "turn/started": emit("start")
+        case "turn/started":
+            emit("start")
+            runningTimer?.invalidate()
+            runningTimer = Timer.scheduledTimer(timeInterval: 30, target: self,
+                                                selector: #selector(reportRunning),
+                                                userInfo: nil, repeats: true)
         case "turn/completed":
+            runningTimer?.invalidate()
+            runningTimer = nil
             let turn = params["turn"] as? [String: Any] ?? [:]
             let status = turn["status"] as? String ?? ""
             emit(status == "completed" ? "completion" : "failure", actionID: turn["id"] as? String)
@@ -189,6 +211,16 @@ final class ManagedCodexSession: NSWindowController, NSWindowDelegate {
             send(["method": "account/rateLimits/read", "id": 3])
         case "item/agentMessage/delta":
             if let delta = params["delta"] as? String { append(delta) }
+        case "item/started", "item/completed":
+            if let item = params["item"] as? [String: Any],
+               let activity = describe(item: item, completed: method == "item/completed") {
+                recordActivity(activity)
+            }
+        case "turn/plan/updated":
+            if let plan = params["plan"] as? [[String: Any]],
+               let step = plan.first(where: { $0["status"] as? String == "inProgress" })?["step"] as? String {
+                recordActivity("Plan: \(step)")
+            }
         case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
             approval(message, params: params)
         case "tool/requestUserInput":
@@ -214,9 +246,39 @@ final class ManagedCodexSession: NSWindowController, NSWindowDelegate {
             parseRateLimits(params["rateLimits"] as? [String: Any])
         case "error":
             let error = params["error"] as? [String: Any]
-            append("\nCodex error: \(error?["message"] as? String ?? "Unknown error")\n")
+            let message = error?["message"] as? String ?? "Unknown error"
+            append("\nCodex error: \(message)\n")
+            recordActivity("Error: \(message)")
         default: break
         }
+    }
+
+    private func describe(item: [String: Any], completed: Bool) -> String? {
+        let prefix = completed ? "Finished" : "Running"
+        switch item["type"] as? String {
+        case "commandExecution":
+            return "\(prefix) command: \(item["command"] as? String ?? "command")"
+        case "fileChange":
+            return completed ? "Finished file changes" : "Changing files"
+        case "mcpToolCall":
+            return "\(prefix) tool: \(item["server"] as? String ?? "MCP") / \(item["tool"] as? String ?? "tool")"
+        case "dynamicToolCall", "collabToolCall":
+            return "\(prefix) tool: \(item["tool"] as? String ?? "agent")"
+        case "webSearch":
+            return "\(prefix) web search: \(item["query"] as? String ?? "search")"
+        case "agentMessage" where completed:
+            return "Codex: \(item["text"] as? String ?? "Response")"
+        case "plan" where completed:
+            return "Plan: \(item["text"] as? String ?? "Updated")"
+        case "contextCompaction":
+            return completed ? "Finished compacting context" : "Compacting context"
+        default: return nil
+        }
+    }
+
+    private func recordActivity(_ action: String) {
+        guard let threadID else { return }
+        app?.agentMonitor.recordManagedActivity(session: pane, threadID: threadID, action: action)
     }
 
     private func emit(_ event: String, actionID: String? = nil) {
@@ -225,6 +287,12 @@ final class ManagedCodexSession: NSWindowController, NSWindowDelegate {
                                   paneToken: pane.agentToken, event: event, actionID: actionID,
                                   observedAt: Date(), source: "Codex app server")
         app?.agentMonitor.ingest(wire)
+    }
+
+    @objc private func reportRunning() {
+        guard process.isRunning, !ended,
+              app?.agentMonitor.snapshot(for: pane.id)?.phase == .running else { return }
+        emit("progress")
     }
 
     private func approval(_ message: [String: Any], params: [String: Any]) {
@@ -325,6 +393,8 @@ final class ManagedCodexSession: NSWindowController, NSWindowDelegate {
     private func endSession() {
         guard !ended else { return }
         ended = true
+        runningTimer?.invalidate()
+        runningTimer = nil
         emit("end")
     }
 }

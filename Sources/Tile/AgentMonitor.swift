@@ -42,6 +42,21 @@ struct AgentWireEvent: Codable {
     let observedAt: Date
     let source: String
     var usage: AgentUsage? = nil
+    var task: String? = nil
+    var activity: String? = nil
+}
+
+struct AgentActivityEntry {
+    let at: Date
+    let text: String
+}
+
+struct AgentDetail {
+    var startedAt: Date?
+    var finishedAt: Date?
+    var task: String?
+    var currentAction: String?
+    var recent: [AgentActivityEntry] = []
 }
 
 struct AgentQuotaWindow: Codable {
@@ -85,6 +100,7 @@ final class AgentMonitor {
     var onNewAttention: ((AgentSnapshot) -> Void)?
     var onRoutineStart: ((AgentSnapshot) -> Void)?
     private var snapshots: [UUID: AgentSnapshot] = [:]
+    private var details: [UUID: AgentDetail] = [:]
     private var pendingActions: [String: AgentSnapshot] = [:]
     private var delivered: Set<String> = []
     private var dismissed: Set<String> = []
@@ -120,6 +136,31 @@ final class AgentMonitor {
                                  usage: snapshot.usage.flatMap { Date().timeIntervalSince($0.sampledAt) <= 120 ? $0 : nil })
         }
         return snapshot
+    }
+
+    func detail(for paneID: UUID) -> AgentDetail? { details[paneID] }
+
+    func recordManagedActivity(session: TerminalSession, threadID: String,
+                               task: String? = nil, action: String? = nil) {
+        guard let snapshot = snapshots[session.id], snapshot.provider == .codex,
+              snapshot.sessionID == threadID else { return }
+        var detail = details[session.id] ?? AgentDetail()
+        if let task {
+            detail.task = Self.summary(task)
+            detail.recent.insert(AgentActivityEntry(at: Date(), text: "Task: \(Self.summary(task))"), at: 0)
+        }
+        if let action {
+            detail.currentAction = Self.summary(action)
+            detail.recent.insert(AgentActivityEntry(at: Date(), text: Self.summary(action)), at: 0)
+        }
+        detail.recent = Array(detail.recent.prefix(8))
+        details[session.id] = detail
+        onChange?()
+    }
+
+    private static func summary(_ text: String) -> String {
+        let flat = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return String(flat.prefix(240))
     }
 
     func attention(in panes: [TerminalSession]) -> [AgentSnapshot] {
@@ -164,11 +205,12 @@ final class AgentMonitor {
         case "question": phase = .questionRequired
         case "failure": phase = .failed
         case "completion": phase = .completedNeedsReview
-        case "end": phase = .idle
+        case "end", "idle": phase = .idle
         case "usage": phase = snapshots[session.id]?.phase ?? .unknown
         default: return
         }
         if let previous = snapshots[session.id], previous.sessionID != event.sessionID {
+            details.removeValue(forKey: session.id)
             dismissed = dismissed.filter { !$0.hasPrefix("\(session.id.uuidString):") }
             delivered = delivered.filter { !$0.hasPrefix("\(session.id.uuidString):") }
             resolved = resolved.filter { !$0.hasPrefix("\(session.id.uuidString):") }
@@ -202,10 +244,27 @@ final class AgentMonitor {
         if phase.priority != nil, resolved.contains(key(for: candidate)) { return }
         if let previous = snapshots[session.id], previous.sessionID == candidate.sessionID,
            previous.phase == candidate.phase, previous.actionID == candidate.actionID,
-           event.usage == nil {
+           event.usage == nil, event.event != "progress" {
             return
         }
         let wasRunning = snapshots[session.id]?.phase == .running
+        var detail = details[session.id] ?? AgentDetail()
+        if event.event == "start", !wasRunning {
+            detail.startedAt = event.observedAt
+            detail.finishedAt = nil
+            detail.currentAction = nil
+        }
+        if let task = event.task { detail.task = Self.summary(task) }
+        if let activity = event.activity {
+            detail.currentAction = Self.summary(activity)
+            detail.recent.insert(AgentActivityEntry(at: event.observedAt, text: Self.summary(activity)), at: 0)
+            detail.recent = Array(detail.recent.prefix(8))
+        }
+        if event.event == "completion" || event.event == "failure" || event.event == "end" {
+            detail.finishedAt = event.observedAt
+            detail.currentAction = nil
+        }
+        details[session.id] = detail
         snapshots[session.id] = candidate
         if phase.priority != nil { pendingActions[key(for: candidate)] = candidate }
         if event.provider == .claude, event.event == "approval" { recentClaudeApproval.insert(session.id) }
@@ -217,6 +276,7 @@ final class AgentMonitor {
 
     func remove(paneID: UUID) {
         snapshots.removeValue(forKey: paneID)
+        details.removeValue(forKey: paneID)
         pendingActions = pendingActions.filter { $0.value.paneID != paneID }
         dismissed = dismissed.filter { !$0.hasPrefix("\(paneID.uuidString):") }
         delivered = delivered.filter { !$0.hasPrefix("\(paneID.uuidString):") }
@@ -298,9 +358,19 @@ enum AgentHook {
         let actionID = (payload["tool_use_id"] as? String)
             ?? (payload["tool_call_id"] as? String)
             ?? (payload["event_id"] as? String)
-        let wire = AgentWireEvent(version: 1, provider: provider, sessionID: sessionID,
+        var wire = AgentWireEvent(version: 1, provider: provider, sessionID: sessionID,
                                   paneToken: token, event: event, actionID: actionID,
                                   observedAt: Date(), source: "\(provider.rawValue) \(hook) hook")
+        if hook == "UserPromptSubmit" || hook == "BeforeAgent" {
+            wire.task = payload["prompt"] as? String
+        }
+        if let tool = payload["tool_name"] as? String {
+            wire.activity = "\(hook): \(tool)"
+        } else if event == "approval" {
+            wire.activity = "Waiting for approval"
+        } else if event == "question" {
+            wire.activity = "Waiting for an answer"
+        }
         send(wire, socketPath: socketPath)
     }
 

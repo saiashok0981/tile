@@ -22,6 +22,8 @@ final class TileApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
     private var keyMonitor: Any?
     private var settingsWindow: SettingsWindow?
     private var managedCodexSessions: [UUID: ManagedCodexSession] = [:]
+    private(set) var menuBarStatus: AgentMenuBarStatus?
+    private var menuBarRefreshTimer: Timer?
     private let agentBridge = AgentBridge()
     lazy var agentMonitor = AgentMonitor(ledgerURL: AgentMonitor.defaultLedgerURL) { [weak self] token in
         self?.windows.flatMap(\.allSessions).first { $0.agentToken == token }
@@ -44,7 +46,7 @@ final class TileApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         agentBridge.onEvent = { [weak self] event in self?.agentMonitor.ingest(event) }
-        agentMonitor.onChange = { [weak self] in self?.windows.forEach { $0.refreshAgentUI() } }
+        agentMonitor.onChange = { [weak self] in self?.refreshAgentUI() }
         agentMonitor.onNewAttention = { [weak self] item in self?.notifyAboutAgent(item) }
         agentMonitor.onRoutineStart = { [weak self] item in self?.notifyAboutAgent(item) }
         if Bundle.main.bundleURL.pathExtension == "app" {
@@ -52,6 +54,7 @@ final class TileApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         }
         agentBridge.start()
         if !restoreWorkspace() { newWindow() }
+        installMenuBarStatus()
         NotificationCenter.default.addObserver(self, selector: #selector(displaysChanged), name: NSApplication.didChangeScreenParametersNotification, object: nil)
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
@@ -69,6 +72,30 @@ final class TileApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
         NSApp.activate(ignoringOtherApps: true)
     }
     var activeWindow: TileWindow? { windows.first { $0.window?.isKeyWindow == true } ?? lastWindow ?? windows.first }
+    func installMenuBarStatus() {
+        guard menuBarStatus == nil else { return }
+        let status = AgentMenuBarStatus()
+        status.onSelect = { [weak self] id in
+            guard let self,
+                  let session = self.windows.flatMap(\.allSessions).first(where: { $0.id == id }) else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            self.select(session)
+        }
+        menuBarStatus = status
+        refreshAgentUI()
+        menuBarRefreshTimer = Timer.scheduledTimer(timeInterval: 30, target: self,
+                                                  selector: #selector(refreshMenuBarStatus),
+                                                  userInfo: nil, repeats: true)
+    }
+    @objc private func refreshMenuBarStatus() { refreshAgentUI() }
+    func refreshAgentUI() {
+        windows.forEach { $0.refreshAgentUI() }
+        let agents = windows.flatMap(\.allSessions).compactMap { session -> (TerminalSession, AgentSnapshot, AgentDetail?)? in
+            guard let snapshot = agentMonitor.snapshot(for: session.id) else { return nil }
+            return (session, snapshot, agentMonitor.detail(for: session.id))
+        }
+        menuBarStatus?.update(agents)
+    }
     func window(containing session: TerminalSession) -> TileWindow? {
         windows.first { $0.allSessions.contains { $0.id == session.id } }
     }
@@ -208,6 +235,7 @@ final class TileApp: NSObject, NSApplicationDelegate, UNUserNotificationCenterDe
     }
     @objc func displaysChanged() {
         windows.forEach { $0.keepOnAvailableScreen() }
+        menuBarStatus?.reposition()
         saveWorkspace()
     }
     func setDesktopFullScreen(_ active: Bool, for id: UUID) {
@@ -374,6 +402,8 @@ if CommandLine.arguments.contains("--smoke-test") {
     exit(runSmokeTest() ? 0 : 1)
 } else if CommandLine.arguments.contains("--agent-test") {
     exit(runAgentWorkflowTest() ? 0 : 1)
+} else if CommandLine.arguments.contains("--menu-bar-agent-test") {
+    exit(runMenuBarAgentTest() ? 0 : 1)
 } else if CommandLine.arguments.contains("--managed-codex-test") {
     exit(runManagedCodexProtocolTest() ? 0 : 1)
 } else if CommandLine.arguments.contains("--codex-live-test") {
